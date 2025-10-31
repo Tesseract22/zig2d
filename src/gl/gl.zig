@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
-const c = @cImport({
+pub const c = @cImport({
     @cDefine("RGFW_OPENGL", {});
     @cDefine("RGFW_ADVANCED_SMOOTH_RESIZE", {});
     @cInclude("thirdparty/RGFW/RGFW.h");
@@ -21,6 +21,8 @@ pub const Font = @import("font.zig");
 const base_vs_src = @embedFile("resources/shaders/base_vertex.glsl");
 const base_fs_src = @embedFile("resources/shaders/base_fragment.glsl");
 const font_fs_src = @embedFile("resources/shaders/font_fragment.glsl");
+
+const default_font = @embedFile("resources/fonts/Ubuntu.ttf");
 
 pub const Vec2 = [2]f32;
 pub const Vec3 = [3]f32;
@@ -67,6 +69,12 @@ pub const GLObj = g.GLuint;
 pub fn vec2_to_vec3(v2: Vec2) Vec3 {
     return .{ v2[0], v2[1], 0 };
 }
+
+pub const KeyState = enum {
+    idle,
+    pressed,
+    hold,
+};
 
 pub fn Context(comptime T: type) type {
     return struct {
@@ -115,10 +123,17 @@ pub fn Context(comptime T: type) type {
         
         mouse_pos_screen: Vec2i,
         mouse_pos_gl: Vec2,
+        mouse_delta: Vec2,
 
         mouse_left: bool,
+        mouse_scroll: Vec2,
 
         input_chars: std.ArrayList(u8),
+
+        last_frame_time_us: i64,
+        delta_time_us: i64,
+
+
                           
        
         const Self = @This();
@@ -183,7 +198,7 @@ pub fn Context(comptime T: type) type {
             std.log.info("Generating glyphs from {}~{}, total {}", 
                 .{ code_first_char, code_last_char, code_char_num });
 
-            self.default_font = Font.load_ttf("src/gl/resources/fonts/Ubuntu.ttf", 
+            self.default_font = Font.load_ttf(default_font, 
                 code_first_char, code_char_num,
                 atlas_size,
                 font_size,
@@ -202,8 +217,15 @@ pub fn Context(comptime T: type) type {
             self.mouse_pos_screen = .{ @intCast(@divFloor(w, 2)), @intCast(@divFloor(h, 2)) };
             self.mouse_pos_gl = .{0, 0};
 
+            self.mouse_left = false;
+            self.mouse_scroll = .{ 0, 0 };
+
             self.a = a;
             self.input_chars = .empty;
+
+            self.last_frame_time_us = std.time.microTimestamp();
+            self.delta_time_us = 0;
+
         }
 
         pub fn screen_to_gl_coord(self: Self, v: Vec2u) Vec2 {
@@ -225,6 +247,9 @@ pub fn Context(comptime T: type) type {
 
         pub fn window_should_close(self: *Self) bool {
             self.mouse_left = false;
+            self.mouse_scroll = .{ 0, 0 };
+            self.mouse_delta = .{ 0, 0 };
+
             self.input_chars.clearRetainingCapacity();
 
             var event: c.RGFW_event = undefined;
@@ -234,6 +259,7 @@ pub fn Context(comptime T: type) type {
                         // log("DEBUG mouse {},{}", .{ event.mouse.x, event.mouse.y });
                         self.mouse_pos_screen = .{ @intCast(event.mouse.x), @intCast(event.mouse.y) };
                         self.mouse_pos_gl = self.screen_to_gl_coord(.{ @intCast(self.mouse_pos_screen[0]), @intCast(self.mouse_pos_screen[1]) });
+                        self.mouse_delta = .{ event.mouse.vecX*self.pixel_scale, event.mouse.vecY*self.pixel_scale };
                     },
                     c.RGFW_mouseButtonPressed => {
                         self.mouse_left = event.button.value == c.RGFW_mouseLeft;
@@ -241,9 +267,16 @@ pub fn Context(comptime T: type) type {
                     c.RGFW_keyPressed => {
                         self.input_chars.append(self.a, event.key.sym) catch unreachable;
                     },
+                    c.RGFW_mouseScroll => {
+                        self.mouse_scroll[0] += event.scroll.x;
+                        self.mouse_scroll[1] += event.scroll.y;
+                    },
                     else => {},
                 }
             }
+            const t = std.time.microTimestamp();
+            self.delta_time_us = t - self.last_frame_time_us;
+            self.last_frame_time_us = t; 
             return c.RGFW_window_shouldClose(self.window) != 0;
         }
 
@@ -457,11 +490,11 @@ pub fn Context(comptime T: type) type {
             return -self.x_right();
         }
 
-        pub fn screen_x(self: Self) f32 {
+        pub fn screen_w(self: Self) f32 {
             return 2 * self.x_right();
         }
 
-        pub fn screen_y(self: Self) f32 {
+        pub fn screen_h(self: Self) f32 {
             return 2 * self.y_top();
         }
 
@@ -477,6 +510,10 @@ pub fn Context(comptime T: type) type {
                 perct * 2
             else 
                 perct * 2 * self.aspect_ratio;
+        }
+
+        pub fn get_delta_time(self: Self) f32 {
+            return @as(f32, @floatFromInt(self.delta_time_us)) / std.time.us_per_s;
         }
         // pub fn draw_line(self: *Self, i: Vec2, j: Vec2) void {
 

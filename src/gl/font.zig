@@ -19,17 +19,26 @@ aligned_quads: []c.stbtt_aligned_quad,
 code_first_char: u21,
 code_char_num: u32,
 
-// pub fn load_ttf_from_memory(ttf_content: []const u8, a: std.mem.Allocator) !Font 
-
-pub fn load_ttf(
+pub fn load_ttf_from_file(
     ttf_file_path: []const u8,
     code_first_char: u21, code_char_num: u32,
     atlas_size: gl.Vec2u,
     font_size: f32,
     a: std.mem.Allocator,) !Font {
+
     const ttf_f = try std.fs.cwd().openFile(ttf_file_path, .{});
     const ttf_content = try ttf_f.readToEndAlloc(a, 1024*1024*1024);
     defer a.free(ttf_content);
+
+    return load_ttf(ttf_content, code_first_char, code_char_num, atlas_size, font_size, a);
+}
+
+pub fn load_ttf(
+    ttf_content: []const u8,
+    code_first_char: u21, code_char_num: u32,
+    atlas_size: gl.Vec2u,
+    font_size: f32,
+    a: std.mem.Allocator,) !Font {
 
     const font_ct = c.stbtt_GetNumberOfFonts(ttf_content.ptr); 
     std.log.info("font count: {}", .{ font_ct });
