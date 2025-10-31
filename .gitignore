@@ -1,0 +1,7 @@
+zig-out
+.zig-cache
+feed.db
+sqlite3.def
+sqlite3.dll
+sqlite3.exe
+

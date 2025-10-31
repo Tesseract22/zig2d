@@ -1,0 +1,14 @@
+.{
+    .version = "0.1.0",
+    .paths = .{ "main.zig", "build.zig" },
+    .name = .rss_reader,
+    .fingerprint = 0x52a7e57184e5dd4d,
+    .dependencies = .{
+        .zigxml = .{
+            .path = "thirdparty/zig-xml",
+        },
+        .zigsqlite = .{
+            .path = "thirdparty/zig-sqlite",
+        },
+    }
+}
