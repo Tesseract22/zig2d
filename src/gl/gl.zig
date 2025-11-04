@@ -22,7 +22,8 @@ const base_vs_src = @embedFile("resources/shaders/base_vertex.glsl");
 const base_fs_src = @embedFile("resources/shaders/base_fragment.glsl");
 const font_fs_src = @embedFile("resources/shaders/font_fragment.glsl");
 
-const default_font = @embedFile("resources/fonts/Ubuntu.ttf");
+// const default_font = @embedFile("resources/fonts/Ubuntu.ttf");
+const default_font_path = "C:/Windows/Fonts/simfang.ttf";
 
 pub const Vec2 = [2]f32;
 pub const Vec3 = [3]f32;
@@ -45,6 +46,8 @@ pub const RGBA = packed struct(u32) {
     a: u8 = 255,
 
     pub const white = RGBA { .r = 255, .g = 255, .b = 255, .a = 255 };
+    pub const black = RGBA { .r = 0, .g = 0, .b = 0, .a = 0xff };
+    pub const yellow = RGBA { .r = 0xff, .g = 0xff, .b = 0, .a = 0xff };
 
     pub fn to_vec4(rgba: RGBA) Vec4 {
         return .{
@@ -114,8 +117,10 @@ pub fn Context(comptime T: type) type {
         bitmap_tex: Texture,
         white_tex: Texture,
 
-        default_font: Font,
+        default_font: Font.Dynamic,
 
+        w: i32,
+        h: i32,
         vierwport_size: u32,
         aspect_ratio: f32, // width / height
         pixel_scale: f32, // how big is a pixel in gl coordinate
@@ -129,6 +134,8 @@ pub fn Context(comptime T: type) type {
         mouse_scroll: Vec2,
 
         input_chars: std.ArrayList(u8),
+
+        is_paste: bool,
 
         last_frame_time_us: i64,
         delta_time_us: i64,
@@ -198,15 +205,16 @@ pub fn Context(comptime T: type) type {
             std.log.info("Generating glyphs from {}~{}, total {}", 
                 .{ code_first_char, code_last_char, code_char_num });
 
-            self.default_font = Font.load_ttf(default_font, 
-                code_first_char, code_char_num,
-                atlas_size,
-                font_size,
-                std.heap.c_allocator)
-                catch @panic("cannot load default font");
+            //self.default_font = Font.Dload_ttf(default_font, 
+            //    code_first_char, code_char_num,
+            //    atlas_size,
+            //    font_size,
+            //    std.heap.c_allocator)
+            //    catch @panic("cannot load default font");
+            self.default_font = Font.Dynamic.init_from_file(default_font_path, atlas_size, a) catch unreachable;
             self.white_tex = Texture.dummy();
 
-            log("DEBUG: bitmap: {}x{}, id: {}", .{ self.default_font.bitmap.w, self.default_font.bitmap.h, self.default_font.bitmap.id });
+            // log("DEBUG: bitmap: {}x{}, id: {}", .{ self.default_font.bitmap.w, self.default_font.bitmap.h, self.default_font.bitmap.id });
             // log("DEBUG: enable range: {}, {} {}", .{ text_range_end, text_range_start, text_range_count });
             //
             // Finalize
@@ -222,50 +230,46 @@ pub fn Context(comptime T: type) type {
 
             self.a = a;
             self.input_chars = .empty;
+            self.is_paste = false;
 
             self.last_frame_time_us = std.time.microTimestamp();
             self.delta_time_us = 0;
 
         }
 
-        pub fn screen_to_gl_coord(self: Self, v: Vec2u) Vec2 {
-            const xf: f32 = @floatFromInt(v[0]);
-            const yf: f32 = @floatFromInt(v[1]);
-            const vf : f32 = @floatFromInt(self.vierwport_size);
-            return if (self.aspect_ratio > 1)
-                 .{
-                    (xf/vf - 0.5) * 2,
-                    (yf/(vf/self.aspect_ratio) - 0.5) * -2 / self.aspect_ratio,
-                }
-            else
-                .{
-                    (xf/(vf*self.aspect_ratio) - 0.5) * 2 * self.aspect_ratio,
-                    (yf/vf - 0.5) * 2,
-                };
-
-        }
-
+        // reset per-frame state and handle events
         pub fn window_should_close(self: *Self) bool {
             self.mouse_left = false;
             self.mouse_scroll = .{ 0, 0 };
             self.mouse_delta = .{ 0, 0 };
 
             self.input_chars.clearRetainingCapacity();
+            self.is_paste = false;
 
             var event: c.RGFW_event = undefined;
             while (c.RGFW_window_checkEvent(self.window, &event) != 0) {
                 switch (event.type) {
                     c.RGFW_mousePosChanged => {
+                        // The `mouse.y`` here is 0 from the top, and WINDOW_HEIGHT at the bottom. This is reversed for opengl.
+                        // To keep it consistent, we invert the y here.
                         // log("DEBUG mouse {},{}", .{ event.mouse.x, event.mouse.y });
-                        self.mouse_pos_screen = .{ @intCast(event.mouse.x), @intCast(event.mouse.y) };
-                        self.mouse_pos_gl = self.screen_to_gl_coord(.{ @intCast(self.mouse_pos_screen[0]), @intCast(self.mouse_pos_screen[1]) });
+                        self.mouse_pos_screen = .{ event.mouse.x, self.h-event.mouse.y };
+                        self.mouse_pos_gl = self.screen_to_gl_coord(.{ self.mouse_pos_screen[0], self.mouse_pos_screen[1] });
                         self.mouse_delta = .{ event.mouse.vecX*self.pixel_scale, event.mouse.vecY*self.pixel_scale };
                     },
                     c.RGFW_mouseButtonPressed => {
                         self.mouse_left = event.button.value == c.RGFW_mouseLeft;
                     },
                     c.RGFW_keyPressed => {
-                        self.input_chars.append(self.a, event.key.sym) catch unreachable;
+                        // TODO: deal with unicode
+                        const ch = event.key.sym;
+                        // if (ch == c.RGFW_backSpace and self.input_chars.items.len > 0) self.input_chars.shrinkRetainingCapacity(self.input_chars.items.len-1)
+                        // std.log.debug("key: {}", .{ event.key });
+                        if (event.key.value == 'v'  and event.key.mod == c.RGFW_modControl) self.is_paste = true;
+                        if (ch < code_first_char or ch > code_last_char) continue
+                        else {
+                            self.input_chars.append(self.a, event.key.sym) catch unreachable;
+                        }
                     },
                     c.RGFW_mouseScroll => {
                         self.mouse_scroll[0] += event.scroll.x;
@@ -284,8 +288,11 @@ pub fn Context(comptime T: type) type {
             return c.RGFW_window_close(self.window);
         }
 
+        // on_resize and on_refresh handled smooth resizing
         fn on_resize(win: ?*c.RGFW_window, w: i32, h: i32) callconv(.c) void {
             const ctx: *Self = @ptrCast(@alignCast(c.RGFW_window_getUserPtr(win)));
+            ctx.w = w;
+            ctx.h = h;
             //.std.log.debug("resized", .{});
             // WINDOW_WIDTH = w;
             // WINDOW_HEIGHT = h;
@@ -308,6 +315,7 @@ pub fn Context(comptime T: type) type {
             ctx.render();
         }
 
+        // Wrapper of user defined render function
         pub fn render(self: *Self) void {
             self.render_fn(self);
             c.RGFW_window_swapBuffers_OpenGL(self.window);
@@ -318,6 +326,7 @@ pub fn Context(comptime T: type) type {
             rgba: Vec4,
             tex: Vec2,
         };
+        // Drawing related
 
         pub fn clear(_: Self, rgba: RGBA) void {
             const rgba_vec4 = rgba.to_vec4();
@@ -326,6 +335,25 @@ pub fn Context(comptime T: type) type {
 
         }
 
+        pub fn begin_scissor_gl_coord(ctx: *Self, botleft: Vec2, size: Vec2) void {
+            const botleft_screen = ctx.gl_coord_to_screen(botleft);
+            const size_screen = ctx.gl_size_to_screen(size);
+
+            // const botleft2 = ctx.screen_to_gl_coord(botleft_screen);
+            // std.log.debug("scissor: {any}; {any} <=> {any}", .{ botleft_screen, botleft, botleft2 });
+
+            g.glScissor(@intCast(botleft_screen[0]), @intCast(botleft_screen[1]), @intCast(size_screen[0]), @intCast(size_screen[1])); 
+            g.glEnable(g.GL_SCISSOR_TEST);
+        }
+
+        pub fn end_scissor(_: *Self) void {
+            g.glDisable(g.GL_SCISSOR_TEST);
+        }
+
+        //
+        // Drawing Shapes
+        //
+        
         pub fn draw_rect(self: *Self, botleft: Vec2, size: Vec2, rgba: RGBA) void {
             self.draw_tex(botleft, size, self.white_tex, rgba);
         }
@@ -413,18 +441,17 @@ pub fn Context(comptime T: type) type {
 
             var local_pos = pos;
             while (utf8_it.nextCodepoint()) |code_point| {
-                if (code_point < code_first_char or code_point > code_last_char) {
-                    var encode_buf: [32]u8 = undefined;
-                    if (std.unicode.utf8Encode(code_point, &encode_buf)) |len| {
-                        log("WARNING: unsupported characteer `{s}`", .{ encode_buf[0..len] });
-                    } else |err| {
-                        log("WARNING: Invalid unicode sequence `0x{s}`: {}", .{ std.fmt.hex(code_point), err });
-                    }
-                    continue;
-                }
+                // if (code_point < code_first_char or code_point > code_last_char) {
+                //     var encode_buf: [32]u8 = undefined;
+                //     if (std.unicode.utf8Encode(code_point, &encode_buf)) |len| {
+                //         log("WARNING: unsupported characteer `{any}`", .{ encode_buf[0..len] });
+                //     } else |err| {
+                //         log("WARNING: invalid unicode sequence `0x{s}`: {}", .{ std.fmt.hex(code_point), err });
+                //     }
+                //     continue;
+                // }
                 
-                const packed_char = &self.default_font.packed_chars[code_point - code_first_char];
-                const aligned_quad = &self.default_font.aligned_quads[code_point - code_first_char];
+                const packed_char, const aligned_quad = self.default_font.get_or_load(code_point);
 
                 // TODO: use width instead of advance to determine linebreak?
                 const advance = packed_char.xadvance * self.pixel_scale * scale;
@@ -457,13 +484,41 @@ pub fn Context(comptime T: type) type {
                 };
 
                 self.draw_tex_pro(botleft, glyph_size,
-                    self.default_font.bitmap, tex_coord,
+                    .{ .id = self.default_font.tex, .w = undefined, .h = undefined }, tex_coord,
                     rgba,
                     false,
                    self.font_shader_pgm);
                 local_pos[0] += advance;
             }
 
+        }
+
+        // 
+        // general wrappers/helpers of RGFW functionalities
+        //
+        
+        pub fn clipboard(_: Self) []const u8 {
+            var size: usize = undefined;
+            const buf = c.RGFW_readClipboard(&size);
+            if (size == 0) return "";
+            assert(buf[size-1] == 0);
+            return buf[0..size-1];
+        }
+
+        //
+        // math helpers
+        //
+        pub fn get_char_size(self: *Self, scale: f32, code_point: u21) Vec2 {
+            if (code_point < code_first_char or code_point > code_last_char) @panic("unsupported character");
+            const glyph_info = &self.default_font.get_or_load(code_point);
+            const packed_char = glyph_info[0];
+            const glyph_size = Vec2 {
+                @as(f32, @floatFromInt(packed_char.x1 - packed_char.x0))
+                    * self.pixel_scale * scale,
+                @as(f32, @floatFromInt(packed_char.y1 - packed_char.y0))
+                    * self.pixel_scale * scale,
+                };
+            return glyph_size;
         }
 
         pub fn cal_font_h(self: *Self, scale: f32) f32 {
@@ -510,6 +565,48 @@ pub fn Context(comptime T: type) type {
                 perct * 2
             else 
                 perct * 2 * self.aspect_ratio;
+        }
+
+        pub fn screen_to_gl_coord(self: Self, v: Vec2i) Vec2 {
+            const xf: f32 = @floatFromInt(v[0]);
+            const yf: f32 = @floatFromInt(v[1]);
+            const vf : f32 = @floatFromInt(self.vierwport_size);
+            return if (self.aspect_ratio > 1)
+                 .{
+                    (xf/vf - 0.5) * 2,
+                    (yf/(vf/self.aspect_ratio) - 0.5) * 2 / self.aspect_ratio,
+                }
+            else
+                .{
+                    (xf/(vf*self.aspect_ratio) - 0.5) * 2 * self.aspect_ratio,
+                    (yf/vf - 0.5) * 2,
+                };
+        }
+
+        pub fn gl_coord_to_screen(self: Self, v: Vec2) Vec2i {
+            const vf: f32 = @floatFromInt(self.vierwport_size);
+            return if (self.aspect_ratio > 1)
+                .{
+                    @intFromFloat((v[0]/2 + 0.5) * vf),
+                    @intFromFloat((v[1]*self.aspect_ratio/2 + 0.5) * (vf/self.aspect_ratio)),
+                }
+            else
+                .{
+                    @intFromFloat(((v[0]/self.aspect_ratio)/2 + 0.5) * (vf*self.aspect_ratio)),
+                    @intFromFloat((v[1]/2+0.5) * vf),
+                };
+        }
+
+        pub fn gl_size_to_screen(self: Self, v: Vec2) Vec2i {
+            const vf: f32 = @floatFromInt(self.vierwport_size);
+            return .{
+                @intFromFloat(v[0] / 2 * vf),
+                @intFromFloat(v[1] / 2 * vf),
+            };
+        }
+
+        pub fn pixels(self: Self, p: f32) f32 {
+            return self.pixel_scale * p;
         }
 
         pub fn get_delta_time(self: Self) f32 {

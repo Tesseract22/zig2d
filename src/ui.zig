@@ -29,7 +29,7 @@ const UI = struct {
                 ui.selected_title = title;
             }
         }
-        ctx.draw_rect_lines(.{ ctx.x_left(), ctx.y_bot() }, .{ 0.3, ctx.screen_y() }, 5, .from_u32(0xffffff30));
+        ctx.draw_rect_lines(.{ ctx.x_left(), ctx.y_bot() }, .{ 0.3, ctx.screen_h() }, 5, .from_u32(0xffffff30));
 
         ctx.draw_text(.{0, 0}, 1, ctx.input_chars.items, .white);
         // std.log.info("Mouse gl pos: {any} {any}", .{ctx.mouse_pos_gl, ctx.mouse_pos_screen});

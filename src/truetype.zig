@@ -12,11 +12,14 @@ const font_atlas_h = 1024;
 
 const code_first_char = 0x4E00; // '一'
 const code_last_char = 0x9FFF; //
+// const code_first_char = ' '; // '一'
+// const code_last_char = '~'; //
+
 const code_char_num = code_last_char - code_first_char + 1;
 
 const font_size = 64.0;
 
-const font_path = "HanyiSentyPagoda Regular.ttf";
+const font_path = "C:/Windows/Fonts/simfang.ttf";
 
 
 pub fn main() !void {
@@ -46,22 +49,33 @@ pub fn main() !void {
         var font_bitmap: [font_atlas_w * font_atlas_h]u8 = undefined;
         var packed_chars: [code_char_num]c.stbtt_packedchar = undefined;
         var aligned_quads: [code_char_num]c.stbtt_aligned_quad = undefined;
+        _ = &aligned_quads;
 
         var ctx = c.stbtt_pack_context {};
 
+        const start = std.time.milliTimestamp();
         assert(c.stbtt_PackBegin(
                 &ctx,
                 &font_bitmap,
                 font_atlas_w,
                 font_atlas_h,
-                offset,
+                0,
                 1,
                 null,
         ) == 1);
 
+        const ret = c.stbtt_PackFontRange(
+            &ctx,
+            &ttf_content[@intCast(offset)],
+            0,
+            font_size,
+            code_first_char,
+            1,
+            &packed_chars
+        );
         _ = c.stbtt_PackFontRange(
             &ctx,
-            ttf_content.ptr,
+            &ttf_content[@intCast(offset)],
             0,
             font_size,
             code_first_char,
@@ -69,7 +83,9 @@ pub fn main() !void {
             &packed_chars
         );
 
-        c.stbtt_PackEnd(&ctx);
+        // c.stbtt_PackEnd(&ctx);
+        const end = std.time.milliTimestamp();
+        std.log.info("{}ms taken to rendered, ret: {}", .{ end-start, ret });
 
         for (0..code_char_num) |i| {
             var _x: f32 = undefined;

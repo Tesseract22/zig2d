@@ -1,6 +1,7 @@
 const Font = @This();
 
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
 const gl = @import("gl.zig");
@@ -112,5 +113,113 @@ pub fn load_ttf(
         .code_char_num = code_char_num,
     };
 }
+
+
+pub const Dynamic = struct {
+
+    pub const Glyph = u32;
+
+    gpa: Allocator,
+
+    spc: c.stbtt_pack_context,
+    font_content: []const u8,
+
+    tex: gl.GLObj,
+
+    cache: std.AutoHashMapUnmanaged(u21, Glyph) = .empty,
+
+    packed_chars: std.ArrayList(c.stbtt_packedchar) = .empty,
+    aligned_quads: std.ArrayList(c.stbtt_aligned_quad) = .empty,
+
+    pub fn init_from_file(file_path: []const u8, atlas_size: gl.Vec2u, gpa: Allocator) !Dynamic {
+        var ttf_f = try std.fs.cwd().openFile(file_path, .{});
+        const ttf_content = ttf_f.readToEndAlloc(gpa, 1024*1024*1024) catch @panic("OOM");
+        return init(ttf_content, atlas_size, gpa);
+    }
+
+    pub fn init(font_content: []const u8, atlas_size: gl.Vec2u, gpa: Allocator) Dynamic {
+        var spc: c.stbtt_pack_context = undefined;
+        const bitmap = gpa.alloc(u8, atlas_size[0] * atlas_size[1]) catch unreachable; 
+        assert(c.stbtt_PackBegin(&spc, bitmap.ptr, @intCast(atlas_size[0]), @intCast(atlas_size[1]), 0, 1, null) == 1);
+
+        var bitmap_tex_id: GLObj = undefined;
+        g.glGenTextures(1, &bitmap_tex_id);
+        g.glBindTexture(g.GL_TEXTURE_2D, bitmap_tex_id);
+
+        g.glTexImage2D(g.GL_TEXTURE_2D, 0,
+            g.GL_R8,
+            @intCast(atlas_size[0]), @intCast(atlas_size[1]), 0, g.GL_RED, g.GL_UNSIGNED_BYTE, bitmap.ptr);
+        g.glTexParameteri(g.GL_TEXTURE_2D, g.GL_TEXTURE_MIN_FILTER, g.GL_LINEAR);
+        g.glTexParameteri(g.GL_TEXTURE_2D, g.GL_TEXTURE_MAG_FILTER, g.GL_LINEAR);
+        g.glTexParameteri(g.GL_TEXTURE_2D, g.GL_TEXTURE_WRAP_S, g.GL_REPEAT);
+        g.glTexParameteri(g.GL_TEXTURE_2D, g.GL_TEXTURE_WRAP_T, g.GL_REPEAT);
+
+        return .{
+            .gpa = gpa,
+            .spc = spc,
+            .font_content = font_content,
+
+            .tex = bitmap_tex_id,
+        };
+    }
+
+    pub fn load_range(font_cache: *Dynamic, start: u21, num: u21) void {
+        const before_size = font_cache.packed_chars.items.len;
+        font_cache.packed_chars.appendNTimes(font_cache.gpa, undefined, num) catch @panic("OOM"); 
+        font_cache.aligned_quads.appendNTimes(font_cache.gpa, undefined, num) catch @panic("OOM"); 
+        const ret = c.stbtt_PackFontRange(
+            &font_cache.spc,
+            font_cache.font_content.ptr,
+            0,
+            64,
+            start,
+            num,
+            &font_cache.packed_chars.items[before_size],
+        );
+        if (ret != 1)
+            std.log.warn("bitmap possible ran out of space", .{});
+        for (before_size..before_size+num, start..start+num) |i, code_point| {
+            var _x: f32 = undefined;
+            var _y: f32 = undefined;
+            c.stbtt_GetPackedQuad(font_cache.packed_chars.items.ptr, 
+                1024, 1024, 
+                @intCast(i),
+                &_x,
+                &_y,
+                &font_cache.aligned_quads.items[i],
+                0);
+
+            font_cache.cache.put(font_cache.gpa, @intCast(code_point), @intCast(i)) catch @panic("OOM");
+        }
+        g.glBindTexture(g.GL_TEXTURE_2D, font_cache.tex);
+
+        // TODO: optimize with TexSubImage2D
+        g.glTexImage2D(g.GL_TEXTURE_2D, 0,
+            g.GL_R8,
+            @intCast(font_cache.spc.width), @intCast(font_cache.spc.height), 0, g.GL_RED, g.GL_UNSIGNED_BYTE, font_cache.spc.pixels);
+    }
+
+    pub fn get_or_load(font_cache: *Dynamic, code: u21) struct { c.stbtt_packedchar, c.stbtt_aligned_quad } {
+        const glyph = font_cache.cache.get(code) orelse blk: {
+            font_cache.load_range(code, 1);
+            break :blk font_cache.cache.get(code).?;
+        };
+        return .{
+            font_cache.packed_chars.items[glyph],
+            font_cache.aligned_quads.items[glyph],
+        };
+    }
+
+    pub fn deinit(font_cache: *Dynamic) void {
+        const gpa = font_cache.gpa;
+        gpa.free(font_cache.spc.pixels);
+        c.stbtt_PackEnd(font_cache.spc);
+
+        font_cache.cache.deinit(gpa);
+        font_cache.packed_chars.deinit(gpa);
+        font_cache.aligned_quads.deinit(gpa);
+    }
+
+};
 
 
