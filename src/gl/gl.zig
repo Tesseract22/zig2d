@@ -48,6 +48,7 @@ pub const RGBA = packed struct(u32) {
     pub const white = RGBA { .r = 255, .g = 255, .b = 255, .a = 255 };
     pub const black = RGBA { .r = 0, .g = 0, .b = 0, .a = 0xff };
     pub const yellow = RGBA { .r = 0xff, .g = 0xff, .b = 0, .a = 0xff };
+    pub const transparent = RGBA { .r = 0, .b = 0, .g = 0, .a = 0};
 
     pub fn to_vec4(rgba: RGBA) Vec4 {
         return .{
@@ -264,8 +265,9 @@ pub fn Context(comptime T: type) type {
                         // TODO: deal with unicode
                         const ch = event.key.sym;
                         // if (ch == c.RGFW_backSpace and self.input_chars.items.len > 0) self.input_chars.shrinkRetainingCapacity(self.input_chars.items.len-1)
-                        // std.log.debug("key: {}", .{ event.key });
-                        if (event.key.value == 'v'  and event.key.mod == c.RGFW_modControl) self.is_paste = true;
+                        // std.log.debug("key: value: 0x{s} sym: 0x{s}, mod: 0x{s}",
+                        //     .{ std.fmt.hex(event.key.value), std.fmt.hex(event.key.sym), std.fmt.hex(event.key.mod) });
+                        if (event.key.value == 'v'  and (event.key.mod & c.RGFW_modControl) != 0) self.is_paste = true;
                         if (ch < code_first_char or ch > code_last_char) continue
                         else {
                             self.input_chars.append(self.a, event.key.sym) catch unreachable;
@@ -490,7 +492,32 @@ pub fn Context(comptime T: type) type {
                    self.font_shader_pgm);
                 local_pos[0] += advance;
             }
+        }
 
+        // TODO: handle newline and invalid unicode
+        pub fn text_width(self: *Self, scale: f32, text: []const u8) f32 {
+            const view = std.unicode.Utf8View.init(text) catch @panic("invalid utf8 string");
+            var utf8_it = view.iterator();
+    
+            var w: f32 = 0;
+            while (utf8_it.nextCodepoint()) |code_point| {
+                // if (code_point < code_first_char or code_point > code_last_char) {
+                //     var encode_buf: [32]u8 = undefined;
+                //     if (std.unicode.utf8Encode(code_point, &encode_buf)) |len| {
+                //         log("WARNING: unsupported characteer `{any}`", .{ encode_buf[0..len] });
+                //     } else |err| {
+                //         log("WARNING: invalid unicode sequence `0x{s}`: {}", .{ std.fmt.hex(code_point), err });
+                //     }
+                //     continue;
+                // }
+
+                const packed_char, _ = self.default_font.get_or_load(code_point);
+
+                // TODO: use width instead of advance to determine linebreak?
+                const advance = packed_char.xadvance * self.pixel_scale * scale;
+                w += advance;
+            }
+            return w;
         }
 
         // 
@@ -503,6 +530,10 @@ pub fn Context(comptime T: type) type {
             if (size == 0) return "";
             assert(buf[size-1] == 0);
             return buf[0..size-1];
+        }
+
+        pub fn set_clipboard(_: Self, buf: []const u8) void {
+            c.RGFW_writeClipboard(buf.ptr, @intCast(buf.len));
         }
 
         //
