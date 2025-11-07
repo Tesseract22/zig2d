@@ -67,6 +67,11 @@ pub const RGBA = packed struct(u32) {
     }
 };
 
+pub const BaseVertexData = extern struct {
+    pos: Vec3,
+    rgba: Vec4,
+    tex: Vec2,
+};
 
 pub const GLObj = g.GLuint;
 
@@ -114,6 +119,12 @@ pub fn Context(comptime T: type) type {
         base_VBO: GLObj,
         base_VAO: GLObj,
         rect_EBO: GLObj,
+
+        batch_VBO: GLObj,
+        batch_VAO: GLObj,
+        batch_EBO: GLObj,
+
+        rect_EBO_list: std.ArrayList([2]Vec3u), // each rectangle consist of two triangles
 
         bitmap_tex: Texture,
         white_tex: Texture,
@@ -200,6 +211,18 @@ pub fn Context(comptime T: type) type {
             g.glGenBuffers(1, &self.rect_EBO);
             g.glBindBuffer(g.GL_ELEMENT_ARRAY_BUFFER, self.rect_EBO);
             g.glBufferData(g.GL_ELEMENT_ARRAY_BUFFER, @sizeOf(@TypeOf(indices)), &indices, g.GL_STATIC_DRAW);
+
+            g.glGenBuffers(1, &self.batch_EBO);
+
+            g.glGenBuffers(1, &self.batch_VBO);
+            g.glBindBuffer(g.GL_ARRAY_BUFFER, self.batch_VBO);
+
+            g.glGenVertexArrays(1, &self.batch_VAO);
+            g.glBindVertexArray(self.batch_VAO);
+            bind_vertex_attr(BaseVertexData) catch unreachable;
+
+
+            self.rect_EBO_list = .empty;
             //
             // Bitmap font
             //
@@ -290,6 +313,18 @@ pub fn Context(comptime T: type) type {
             return c.RGFW_window_close(self.window);
         }
 
+        pub fn expand_rect_ebo(self: *Self, size: usize) void {
+            while (size > self.rect_EBO_list.items.len) {
+                const curr: c_uint = @intCast(self.rect_EBO_list.items.len*4); // each rectangle has 4 vertices
+                const indices = [2]Vec3u {
+                    .{ 0+curr, 1+curr, 3+curr},
+                    .{ 1+curr, 2+curr, 3+curr},
+                };
+
+                self.rect_EBO_list.append(self.a, indices) catch unreachable;
+            }
+        }
+
         // on_resize and on_refresh handled smooth resizing
         fn on_resize(win: ?*c.RGFW_window, w: i32, h: i32) callconv(.c) void {
             const ctx: *Self = @ptrCast(@alignCast(c.RGFW_window_getUserPtr(win)));
@@ -323,11 +358,6 @@ pub fn Context(comptime T: type) type {
             c.RGFW_window_swapBuffers_OpenGL(self.window);
         }
 
-        const BaseVertexData = extern struct {
-            pos: Vec3,
-            rgba: Vec4,
-            tex: Vec2,
-        };
         // Drawing related
 
         pub fn clear(_: Self, rgba: RGBA) void {
@@ -409,12 +439,21 @@ pub fn Context(comptime T: type) type {
                 .{ .pos = .{left+w, bot,   0}, .rgba = rgba_vec4, .tex = tex_coord[3] },
             };
             
+            self.draw_tex_vertex_data(vertexes, tex, lines_only, shader_program);
+        }
+
+        pub fn draw_tex_vertex_data(self: *Self, 
+            vertexes: [4]BaseVertexData, 
+            tex: Texture,
+            lines_only: bool,
+            shader_program: GLObj) void {
+
             g.glUseProgram(shader_program);
 
             g.glBindBuffer(g.GL_ARRAY_BUFFER, self.base_VBO);
             g.glBufferData(g.GL_ARRAY_BUFFER, @sizeOf(@TypeOf(vertexes)), &vertexes, g.GL_STATIC_DRAW);
 
-            
+
 
             g.glBindVertexArray(self.base_VAO);
 
@@ -425,8 +464,149 @@ pub fn Context(comptime T: type) type {
             } else {
                 g.glBindBuffer(g.GL_ELEMENT_ARRAY_BUFFER, self.rect_EBO);
                 g.glDrawElements(g.GL_TRIANGLES, 6, g.GL_UNSIGNED_INT, @ptrFromInt(0));
+            }
+        }
+
+        pub fn draw_tex_batch(self: *Self,
+            vertexes: [][4]BaseVertexData,
+            tex: Texture,
+            lines_only: bool,
+            shader_program: GLObj) void {
+
+            
+            g.glUseProgram(shader_program);
+           
+            g.glBindBuffer(g.GL_ARRAY_BUFFER, self.batch_VBO);
+            g.glBufferData(g.GL_ARRAY_BUFFER, @intCast(@sizeOf([4]BaseVertexData) * vertexes.len), vertexes.ptr, g.GL_STATIC_DRAW);
+
+            // g.glBufferData(g.GL_ARRAY_BUFFER, @sizeOf(@TypeOf(mock_vertexes)), &mock_vertexes, g.GL_STATIC_DRAW);
+
+            g.glBindVertexArray(self.batch_VAO);
+
+            g.glBindTexture(g.GL_TEXTURE_2D, tex.id);   
+
+            if (lines_only) {
+                g.glDrawArrays(g.GL_LINE_LOOP, 0, 4);
+            } else {
+                self.expand_rect_ebo(vertexes.len);
+                // std.log.debug("{}", .{ vertexes.len })
+                g.glBindBuffer(g.GL_ELEMENT_ARRAY_BUFFER, self.rect_EBO);
+                const EBO_size = @sizeOf([2]Vec3u) * self.rect_EBO_list.items.len;
+                g.glBufferData(
+                    g.GL_ELEMENT_ARRAY_BUFFER,
+                    @intCast(EBO_size), self.rect_EBO_list.items.ptr,
+                    g.GL_STATIC_DRAW);
+                g.glDrawElements(g.GL_TRIANGLES, @intCast(6 * vertexes.len), g.GL_UNSIGNED_INT, @ptrFromInt(0));
+            }
+
+            g.glUseProgram(0);
+            g.glBindBuffer(g.GL_ARRAY_BUFFER, 0);
+            g.glBindVertexArray(0);
+            g.glBindTexture(g.GL_TEXTURE_2D, 0);   
+            g.glBindBuffer(g.GL_ELEMENT_ARRAY_BUFFER, 0);
+        }
+
+        pub fn make_rect_vertex_data(_: *Self, botleft: Vec2, size: Vec2, rgba: RGBA) [4]BaseVertexData {
+            const left, const bot = botleft;
+            const w, const h = size;
+            const rgba_vec4 = rgba.to_vec4();
+
+            const tex_coord = rect_tex_coord;
+
+            return [4]BaseVertexData {
+                .{ .pos = .{left+w, bot+h, 0}, .rgba = rgba_vec4, .tex = tex_coord[0] },
+                .{ .pos = .{left,   bot+h, 0}, .rgba = rgba_vec4, .tex = tex_coord[1] },
+                .{ .pos = .{left,   bot,   0}, .rgba = rgba_vec4, .tex = tex_coord[2] },
+                .{ .pos = .{left+w, bot,   0}, .rgba = rgba_vec4, .tex = tex_coord[3] },
+            };
+        }
+
+        pub const CodePointVertexIterator = struct {
+            pos: Vec2,
+            local_pos: Vec2,
+
+            scale: f32,
+            max_width: f32,
+            rgba_vec4: Vec4,
+
+            utf8_it: std.unicode.Utf8Iterator,
+
+            ctx: *Self,
+
+            pub fn next(self: *CodePointVertexIterator) ?[4]BaseVertexData {
+                const scale = self.scale;
+                const pos = self.pos;
+                const max_width = self.max_width;
+                const rgba_vec4 = self.rgba_vec4;
+
+                const code_point = self.utf8_it.nextCodepoint() orelse return null;
+                // if (code_point < code_first_char or code_point > code_last_char) {
+                //     var encode_buf: [32]u8 = undefined;
+                //     if (std.unicode.utf8Encode(code_point, &encode_buf)) |len| {
+                //         log("WARNING: unsupported characteer `{any}`", .{ encode_buf[0..len] });
+                //     } else |err| {
+                //         log("WARNING: invalid unicode sequence `0x{s}`: {}", .{ std.fmt.hex(code_point), err });
+                //     }
+                //     continue;
+                // }
+
+                const packed_char, const aligned_quad = self.ctx.default_font.get_or_load(code_point);
+
+                // TODO: use width instead of advance to determine linebreak?
+                const advance = packed_char.xadvance * self.ctx.pixel_scale * scale;
+                if (self.local_pos[0] + advance - pos[0] > max_width) {
+                    self.local_pos[0] = pos[0]; 
+                    self.local_pos[1] -= self.ctx.cal_font_h(scale);
+                }
+
+                const w = 
+                    @as(f32, @floatFromInt(packed_char.x1 - packed_char.x0))
+                        * self.ctx.pixel_scale * scale;
+                const h = 
+                    @as(f32, @floatFromInt(packed_char.y1 - packed_char.y0))
+                        * self.ctx.pixel_scale * scale;
+
+                const left = self.local_pos[0] + (packed_char.xoff * self.ctx.pixel_scale * scale);
+                const bot = self.local_pos[1] - 
+                    (packed_char.yoff +
+                     @as(f32, @floatFromInt(packed_char.y1)) -
+                     @as(f32, @floatFromInt(packed_char.y0)))
+                    * self.ctx.pixel_scale * scale;
+
+                const tex_coord = [4]Vec2 {
+                    .{ aligned_quad.s1, aligned_quad.t0 },
+                    .{ aligned_quad.s0, aligned_quad.t0 },
+                    .{ aligned_quad.s0, aligned_quad.t1 },
+                    .{ aligned_quad.s1, aligned_quad.t1 },
+                };
+
+                self.local_pos[0] += advance;
+                return [4]BaseVertexData {
+                    .{ .pos = .{left+w, bot+h, 0}, .rgba = rgba_vec4, .tex = tex_coord[0] },
+                    .{ .pos = .{left,   bot+h, 0}, .rgba = rgba_vec4, .tex = tex_coord[1] },
+                    .{ .pos = .{left,   bot,   0}, .rgba = rgba_vec4, .tex = tex_coord[2] },
+                    .{ .pos = .{left+w, bot,   0}, .rgba = rgba_vec4, .tex = tex_coord[3] },
+                };
 
             }
+        };
+
+        pub fn make_code_point_vertex_data(
+            self: *Self, pos: Vec2, scale: f32,
+            text: []const u8, max_width: f32, rgba: RGBA) CodePointVertexIterator {
+
+            const view = std.unicode.Utf8View.init(text) catch @panic("invalid utf8 string");
+            const utf8_it = view.iterator();
+
+            return CodePointVertexIterator {
+                .pos = pos,
+                .local_pos = pos,
+                .scale = scale,
+                .max_width = max_width,
+                .rgba_vec4 = rgba.to_vec4(),
+                .utf8_it = utf8_it,
+                .ctx = self,
+            };
         }
 
         pub fn draw_text(self: *Self, pos: Vec2, size: f32, text: []const u8, rgba: RGBA) void {
@@ -438,59 +618,9 @@ pub fn Context(comptime T: type) type {
             text: []const u8, max_width: f32, rgba: RGBA) void {
 
             // std.log.debug("codepoints: {}", .{ std.unicode.utf8CountCodepoints(text) catch unreachable });
-            const view = std.unicode.Utf8View.init(text) catch @panic("invalid utf8 string");
-            var utf8_it = view.iterator();
-
-            var local_pos = pos;
-            while (utf8_it.nextCodepoint()) |code_point| {
-                // if (code_point < code_first_char or code_point > code_last_char) {
-                //     var encode_buf: [32]u8 = undefined;
-                //     if (std.unicode.utf8Encode(code_point, &encode_buf)) |len| {
-                //         log("WARNING: unsupported characteer `{any}`", .{ encode_buf[0..len] });
-                //     } else |err| {
-                //         log("WARNING: invalid unicode sequence `0x{s}`: {}", .{ std.fmt.hex(code_point), err });
-                //     }
-                //     continue;
-                // }
-                
-                const packed_char, const aligned_quad = self.default_font.get_or_load(code_point);
-
-                // TODO: use width instead of advance to determine linebreak?
-                const advance = packed_char.xadvance * self.pixel_scale * scale;
-                if (local_pos[0] + advance - pos[0] > max_width) {
-                    local_pos[0] = pos[0]; 
-                    local_pos[1] -= self.cal_font_h(scale);
-                }
-
-                const glyph_size = Vec2 {
-                    @as(f32, @floatFromInt(packed_char.x1 - packed_char.x0))
-                        * self.pixel_scale * scale,
-                    @as(f32, @floatFromInt(packed_char.y1 - packed_char.y0))
-                        * self.pixel_scale * scale,
-                };
-
-                const botleft = Vec2 {
-                    local_pos[0] + (packed_char.xoff * self.pixel_scale * scale), 
-                    local_pos[1] - 
-                        (packed_char.yoff +
-                         @as(f32, @floatFromInt(packed_char.y1)) -
-                         @as(f32, @floatFromInt(packed_char.y0)))
-                        * self.pixel_scale * scale,
-                };
-
-                const tex_coord = [4]Vec2 {
-                    .{ aligned_quad.s1, aligned_quad.t0 },
-                    .{ aligned_quad.s0, aligned_quad.t0 },
-                    .{ aligned_quad.s0, aligned_quad.t1 },
-                    .{ aligned_quad.s1, aligned_quad.t1 },
-                };
-
-                self.draw_tex_pro(botleft, glyph_size,
-                    .{ .id = self.default_font.tex, .w = undefined, .h = undefined }, tex_coord,
-                    rgba,
-                    false,
-                   self.font_shader_pgm);
-                local_pos[0] += advance;
+            var it = self.make_code_point_vertex_data(pos, scale, text, max_width, rgba);
+            while (it.next()) |vertexes| {
+                self.draw_tex_vertex_data(vertexes, .{ .id = self.default_font.tex, .w = undefined, .h = undefined }, false, self.font_shader_pgm);
             }
         }
 
@@ -501,19 +631,7 @@ pub fn Context(comptime T: type) type {
     
             var w: f32 = 0;
             while (utf8_it.nextCodepoint()) |code_point| {
-                // if (code_point < code_first_char or code_point > code_last_char) {
-                //     var encode_buf: [32]u8 = undefined;
-                //     if (std.unicode.utf8Encode(code_point, &encode_buf)) |len| {
-                //         log("WARNING: unsupported characteer `{any}`", .{ encode_buf[0..len] });
-                //     } else |err| {
-                //         log("WARNING: invalid unicode sequence `0x{s}`: {}", .{ std.fmt.hex(code_point), err });
-                //     }
-                //     continue;
-                // }
-
                 const packed_char, _ = self.default_font.get_or_load(code_point);
-
-                // TODO: use width instead of advance to determine linebreak?
                 const advance = packed_char.xadvance * self.pixel_scale * scale;
                 w += advance;
             }
