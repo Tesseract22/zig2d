@@ -470,7 +470,7 @@ pub fn Context(comptime T: type) type {
         pub fn draw_tex_batch(self: *Self,
             vertexes: [][4]BaseVertexData,
             tex: Texture,
-            lines_only: bool,
+            line_thickness: ?f32,
             shader_program: GLObj) void {
 
             
@@ -485,8 +485,11 @@ pub fn Context(comptime T: type) type {
 
             g.glBindTexture(g.GL_TEXTURE_2D, tex.id);   
 
-            if (lines_only) {
-                g.glDrawArrays(g.GL_LINE_LOOP, 0, 4);
+            if (line_thickness) |thickness| {
+                g.glLineWidth(thickness);
+                for (0..vertexes.len) |i|
+                    g.glDrawArrays(g.GL_LINE_LOOP, @intCast(i*4), 4);
+                g.glLineWidth(0);
             } else {
                 self.expand_rect_ebo(vertexes.len);
                 // std.log.debug("{}", .{ vertexes.len })
