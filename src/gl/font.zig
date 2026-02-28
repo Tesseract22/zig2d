@@ -118,6 +118,42 @@ pub fn load_ttf(
 pub const Dynamic = struct {
 
     pub const Glyph = u32;
+    pub const HashKey = struct { 
+        code: u21, 
+        size: f32
+    };
+    const HashContext = struct {
+        pub fn hash(_: HashContext, key: HashKey) u64 {
+            var hasher = std.hash.Wyhash.init(0);
+            auto_hash(&hasher, key);
+            return hasher.final();
+        }
+
+        pub fn eql(_: HashContext, a: HashKey, b: HashKey) bool {
+            return 
+                a.code == b.code and 
+                a.size == b.size;
+        }
+
+        fn auto_hash(hasher: anytype, key: anytype) void {
+            const Key = @TypeOf(key);
+            if (Key == []const u8 or Key == []u8) {
+                return hasher.update(key);
+            }
+            switch (@typeInfo(Key)) {
+                .float => |info| {
+                    assert(key > 0);
+                    return std.hash.autoHash(hasher, @as(std.meta.Int(.unsigned, info.bits), @bitCast(key)));
+                },
+                .@"struct" => |info| {
+                    inline for (info.fields) |field| {
+                        auto_hash(hasher, @field(key, field.name));
+                    }
+                },
+                else => return std.hash.autoHash(hasher, key),
+            }
+        }
+    };
 
     gpa: Allocator,
 
@@ -126,7 +162,7 @@ pub const Dynamic = struct {
 
     tex: gl.GLObj,
 
-    cache: std.AutoHashMapUnmanaged(u21, Glyph) = .empty,
+    cache: std.HashMapUnmanaged(HashKey, Glyph, HashContext, 90) = .empty,
 
     packed_chars: std.ArrayList(c.stbtt_packedchar) = .empty,
     aligned_quads: std.ArrayList(c.stbtt_aligned_quad) = .empty,
@@ -163,7 +199,7 @@ pub const Dynamic = struct {
         };
     }
 
-    pub fn load_range(font_cache: *Dynamic, start: u21, num: u21) void {
+    pub fn load_range(font_cache: *Dynamic, start: u21, num: u21, font_size: f32) void {
         const before_size = font_cache.packed_chars.items.len;
         font_cache.packed_chars.appendNTimes(font_cache.gpa, undefined, num) catch @panic("OOM"); 
         font_cache.aligned_quads.appendNTimes(font_cache.gpa, undefined, num) catch @panic("OOM"); 
@@ -171,13 +207,13 @@ pub const Dynamic = struct {
             &font_cache.spc,
             font_cache.font_content.ptr,
             0,
-            64,
+            font_size,
             start,
             num,
             &font_cache.packed_chars.items[before_size],
         );
         if (ret != 1)
-            std.log.warn("bitmap possible ran out of space", .{});
+            std.log.warn("bitmap possibly ran out of space", .{});
         for (before_size..before_size+num, start..start+num) |i, code_point| {
             var _x: f32 = undefined;
             var _y: f32 = undefined;
@@ -189,7 +225,7 @@ pub const Dynamic = struct {
                 &font_cache.aligned_quads.items[i],
                 0);
 
-            font_cache.cache.put(font_cache.gpa, @intCast(code_point), @intCast(i)) catch @panic("OOM");
+            font_cache.cache.put(font_cache.gpa, .{ .code = @intCast(code_point), .size = font_size }, @intCast(i)) catch @panic("OOM");
         }
         g.glBindTexture(g.GL_TEXTURE_2D, font_cache.tex);
 
@@ -199,10 +235,11 @@ pub const Dynamic = struct {
             @intCast(font_cache.spc.width), @intCast(font_cache.spc.height), 0, g.GL_RED, g.GL_UNSIGNED_BYTE, font_cache.spc.pixels);
     }
 
-    pub fn get_or_load(font_cache: *Dynamic, code: u21) struct { c.stbtt_packedchar, c.stbtt_aligned_quad } {
-        const glyph = font_cache.cache.get(code) orelse blk: {
-            font_cache.load_range(code, 1);
-            break :blk font_cache.cache.get(code).?;
+    pub fn get_or_load(font_cache: *Dynamic, code: u21, font_size: f32) struct { c.stbtt_packedchar, c.stbtt_aligned_quad } {
+        const key = HashKey { .code = code, .size = font_size };
+        const glyph = font_cache.cache.get(key) orelse blk: {
+            font_cache.load_range(code, 1, font_size);
+            break :blk font_cache.cache.get(key).?;
         };
         return .{
             font_cache.packed_chars.items[glyph],

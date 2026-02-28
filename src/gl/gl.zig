@@ -93,7 +93,8 @@ pub fn Context(comptime T: type) type {
         pub const code_last_char = '~';
         pub const code_char_num = code_last_char - code_first_char + 1;
 
-        pub const font_size = 64.0;
+        pub const font_pixels = 32.0;
+        pub const display_font_pixels = 64.0;
 
         const rect_tex_coord = [_]Vec2 {
             .{1, 0},
@@ -229,12 +230,6 @@ pub fn Context(comptime T: type) type {
             std.log.info("Generating glyphs from {}~{}, total {}", 
                 .{ code_first_char, code_last_char, code_char_num });
 
-            //self.default_font = Font.Dload_ttf(default_font, 
-            //    code_first_char, code_char_num,
-            //    atlas_size,
-            //    font_size,
-            //    std.heap.c_allocator)
-            //    catch @panic("cannot load default font");
             self.default_font = Font.Dynamic.init_from_file(default_font_path, atlas_size, a) catch unreachable;
             self.white_tex = Texture.dummy();
 
@@ -537,7 +532,7 @@ pub fn Context(comptime T: type) type {
             ctx: *Self,
 
             pub fn next(self: *CodePointVertexIterator) ?[4]BaseVertexData {
-                const scale = self.scale;
+                const scale = self.scale * (display_font_pixels / font_pixels);
                 const pos = self.pos;
                 const max_width = self.max_width;
                 const rgba_vec4 = self.rgba_vec4;
@@ -553,7 +548,7 @@ pub fn Context(comptime T: type) type {
                 //     continue;
                 // }
 
-                const packed_char, const aligned_quad = self.ctx.default_font.get_or_load(code_point);
+                const packed_char, const aligned_quad = self.ctx.default_font.get_or_load(code_point, font_pixels);
 
                 // TODO: use width instead of advance to determine linebreak?
                 const advance = packed_char.xadvance * self.ctx.pixel_scale * scale;
@@ -613,7 +608,7 @@ pub fn Context(comptime T: type) type {
         }
 
         pub fn draw_text(self: *Self, pos: Vec2, size: f32, text: []const u8, rgba: RGBA) void {
-            self.draw_text_within_width(pos, size ,text, std.math.floatMax(f32), rgba);
+            self.draw_text_within_width(pos, size, text, std.math.floatMax(f32), rgba);
         }
 
         pub fn draw_text_within_width(
@@ -634,8 +629,8 @@ pub fn Context(comptime T: type) type {
     
             var w: f32 = 0;
             while (utf8_it.nextCodepoint()) |code_point| {
-                const packed_char, _ = self.default_font.get_or_load(code_point);
-                const advance = packed_char.xadvance * self.pixel_scale * scale;
+                const packed_char, _ = self.default_font.get_or_load(code_point, font_pixels);
+                const advance = packed_char.xadvance * self.pixel_scale * scale * (display_font_pixels / font_pixels);
                 w += advance;
             }
             return w;
@@ -644,7 +639,6 @@ pub fn Context(comptime T: type) type {
         // 
         // general wrappers/helpers of RGFW functionalities
         //
-        
         pub fn clipboard(_: Self) []const u8 {
             var size: usize = undefined;
             const buf = c.RGFW_readClipboard(&size);
@@ -662,19 +656,19 @@ pub fn Context(comptime T: type) type {
         //
         pub fn get_char_size(self: *Self, scale: f32, code_point: u21) Vec2 {
             if (code_point < code_first_char or code_point > code_last_char) @panic("unsupported character");
-            const glyph_info = &self.default_font.get_or_load(code_point);
+            const glyph_info = &self.default_font.get_or_load(code_point, font_pixels);
             const packed_char = glyph_info[0];
             const glyph_size = Vec2 {
                 @as(f32, @floatFromInt(packed_char.x1 - packed_char.x0))
-                    * self.pixel_scale * scale,
+                    * self.pixel_scale * scale * (display_font_pixels / font_pixels),
                 @as(f32, @floatFromInt(packed_char.y1 - packed_char.y0))
-                    * self.pixel_scale * scale,
+                    * self.pixel_scale * scale * (display_font_pixels / font_pixels),
                 };
             return glyph_size;
         }
 
         pub fn cal_font_h(self: *Self, scale: f32) f32 {
-            return font_size * self.pixel_scale * scale;
+            return display_font_pixels * self.pixel_scale * scale;
         }
 
         // return the gl y coordinate of the top of screen
