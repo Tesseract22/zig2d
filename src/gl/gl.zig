@@ -22,8 +22,7 @@ const base_vs_src = @embedFile("resources/shaders/base_vertex.glsl");
 const base_fs_src = @embedFile("resources/shaders/base_fragment.glsl");
 const font_fs_src = @embedFile("resources/shaders/font_fragment.glsl");
 
-// const default_font = @embedFile("resources/fonts/Ubuntu.ttf");
-const default_font_path = "C:/Windows/Fonts/simfang.ttf";
+const default_font_path = "C:/Windows/Fonts/simhei.ttf";
 
 pub const Vec2 = [2]f32;
 pub const Vec3 = [3]f32;
@@ -130,7 +129,9 @@ pub fn Context(comptime T: type) type {
         bitmap_tex: Texture,
         white_tex: Texture,
 
-        default_font: Font.Dynamic,
+        fonts: Font.Dynamic,
+        default_font: Font,
+        active_font: Font,
 
         w: i32,
         h: i32,
@@ -158,7 +159,7 @@ pub fn Context(comptime T: type) type {
        
         const Self = @This();
         pub fn init(self: *Self, user_data: *T, render_fn: *const fn (ctx: *Self) void,
-            title: [:0]const u8, w: i32, h: i32, a: Allocator) !void {
+            title: [:0]const u8, w: i32, h: i32, gpa: Allocator) !void {
 
             self.window = c.RGFW_createWindow(title, 0, 0, w, h, 
                 c.RGFW_windowCenter
@@ -230,11 +231,11 @@ pub fn Context(comptime T: type) type {
             std.log.info("Generating glyphs from {}~{}, total {}", 
                 .{ code_first_char, code_last_char, code_char_num });
 
-            self.default_font = Font.Dynamic.init_from_file(default_font_path, atlas_size, a) catch unreachable;
+            self.fonts = .init(atlas_size, gpa);
+            self.default_font = Font.load_font_content(default_font_path, gpa) catch unreachable;
+            self.set_active_font(self.default_font);
             self.white_tex = Texture.dummy();
 
-            // log("DEBUG: bitmap: {}x{}, id: {}", .{ self.default_font.bitmap.w, self.default_font.bitmap.h, self.default_font.bitmap.id });
-            // log("DEBUG: enable range: {}, {} {}", .{ text_range_end, text_range_start, text_range_count });
             //
             // Finalize
             //
@@ -247,7 +248,7 @@ pub fn Context(comptime T: type) type {
             self.mouse_left = false;
             self.mouse_scroll = .{ 0, 0 };
 
-            self.a = a;
+            self.a = gpa;
             self.input_chars = .empty;
             self.is_paste = false;
 
@@ -530,6 +531,8 @@ pub fn Context(comptime T: type) type {
             utf8_it: std.unicode.Utf8Iterator,
 
             ctx: *Self,
+            fonts: *Font.Dynamic,
+            active_font: Font,
 
             pub fn next(self: *CodePointVertexIterator) ?[4]BaseVertexData {
                 const scale = self.scale * (display_font_pixels / font_pixels);
@@ -548,7 +551,7 @@ pub fn Context(comptime T: type) type {
                 //     continue;
                 // }
 
-                const packed_char, const aligned_quad = self.ctx.default_font.get_or_load(code_point, font_pixels);
+                const packed_char, const aligned_quad = self.fonts.get_or_load(self.active_font, code_point, font_pixels);
 
                 // TODO: use width instead of advance to determine linebreak?
                 const advance = packed_char.xadvance * self.ctx.pixel_scale * scale;
@@ -589,6 +592,10 @@ pub fn Context(comptime T: type) type {
             }
         };
 
+        pub fn set_active_font(self: *Self, font: Font) void {
+            self.active_font = font;
+        } 
+
         pub fn make_code_point_vertex_data(
             self: *Self, pos: Vec2, scale: f32,
             text: []const u8, max_width: f32, rgba: RGBA) CodePointVertexIterator {
@@ -604,6 +611,8 @@ pub fn Context(comptime T: type) type {
                 .rgba_vec4 = rgba.to_vec4(),
                 .utf8_it = utf8_it,
                 .ctx = self,
+                .fonts =  &self.fonts,
+                .active_font = self.active_font,
             };
         }
 
@@ -618,7 +627,7 @@ pub fn Context(comptime T: type) type {
             // std.log.debug("codepoints: {}", .{ std.unicode.utf8CountCodepoints(text) catch unreachable });
             var it = self.make_code_point_vertex_data(pos, scale, text, max_width, rgba);
             while (it.next()) |vertexes| {
-                self.draw_tex_vertex_data(vertexes, .{ .id = self.default_font.tex, .w = undefined, .h = undefined }, false, self.font_shader_pgm);
+                self.draw_tex_vertex_data(vertexes, .{ .id = self.fonts.tex, .w = undefined, .h = undefined }, false, self.font_shader_pgm);
             }
         }
 
@@ -629,7 +638,7 @@ pub fn Context(comptime T: type) type {
     
             var w: f32 = 0;
             while (utf8_it.nextCodepoint()) |code_point| {
-                const packed_char, _ = self.default_font.get_or_load(code_point, font_pixels);
+                const packed_char, _ = self.fonts.get_or_load(self.active_font, code_point, font_pixels);
                 const advance = packed_char.xadvance * self.pixel_scale * scale * (display_font_pixels / font_pixels);
                 w += advance;
             }
@@ -656,7 +665,7 @@ pub fn Context(comptime T: type) type {
         //
         pub fn get_char_size(self: *Self, scale: f32, code_point: u21) Vec2 {
             if (code_point < code_first_char or code_point > code_last_char) @panic("unsupported character");
-            const glyph_info = &self.default_font.get_or_load(code_point, font_pixels);
+            const glyph_info = &self.fonts.get_or_load(self.active_font, code_point, font_pixels);
             const packed_char = glyph_info[0];
             const glyph_size = Vec2 {
                 @as(f32, @floatFromInt(packed_char.x1 - packed_char.x0))
