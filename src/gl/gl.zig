@@ -541,6 +541,7 @@ pub fn Context(comptime T: type) type {
                 const rgba_vec4 = self.rgba_vec4;
 
                 const code_point = self.utf8_it.nextCodepoint() orelse return null;
+                if (code_point == '\n') @panic("newline not supported");
                 // if (code_point < code_first_char or code_point > code_last_char) {
                 //     var encode_buf: [32]u8 = undefined;
                 //     if (std.unicode.utf8Encode(code_point, &encode_buf)) |len| {
