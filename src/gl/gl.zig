@@ -677,8 +677,12 @@ pub fn Context(comptime T: type) type {
             return glyph_size;
         }
 
+        pub fn cal_font_h_pixel(_: Self, scale: f32) f32 {
+            return display_font_pixels * scale;
+        }
+
         pub fn cal_font_h(self: *Self, scale: f32) f32 {
-            return display_font_pixels * self.pixel_scale * scale;
+            return self.cal_font_h_pixel(scale) * self.pixel_scale;
         }
 
         // return the gl y coordinate of the top of screen
