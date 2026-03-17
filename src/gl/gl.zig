@@ -2,7 +2,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 
-pub const c = @cImport({
+const c = @cImport({
     @cDefine("RGFW_OPENGL", {});
     @cDefine("RGFW_ADVANCED_SMOOTH_RESIZE", {});
     @cInclude("thirdparty/RGFW/RGFW.h");
@@ -144,7 +144,6 @@ pub fn Context(comptime T: type) type {
         mouse_pos_gl: Vec2,
         mouse_delta: Vec2,
 
-        mouse_left: bool,
         mouse_scroll: Vec2,
 
         input_chars: std.ArrayList(u8),
@@ -245,7 +244,6 @@ pub fn Context(comptime T: type) type {
             self.mouse_pos_screen = .{ @intCast(@divFloor(w, 2)), @intCast(@divFloor(h, 2)) };
             self.mouse_pos_gl = .{0, 0};
 
-            self.mouse_left = false;
             self.mouse_scroll = .{ 0, 0 };
 
             self.a = gpa;
@@ -259,7 +257,6 @@ pub fn Context(comptime T: type) type {
 
         // reset per-frame state and handle events
         pub fn window_should_close(self: *Self) bool {
-            self.mouse_left = false;
             self.mouse_scroll = .{ 0, 0 };
             self.mouse_delta = .{ 0, 0 };
 
@@ -276,9 +273,6 @@ pub fn Context(comptime T: type) type {
                         self.mouse_pos_screen = .{ event.mouse.x, self.h-event.mouse.y };
                         self.mouse_pos_gl = self.screen_to_gl_coord(.{ self.mouse_pos_screen[0], self.mouse_pos_screen[1] });
                         self.mouse_delta = .{ event.mouse.vecX*self.pixel_scale, event.mouse.vecY*self.pixel_scale };
-                    },
-                    c.RGFW_mouseButtonPressed => {
-                        self.mouse_left = event.button.value == c.RGFW_mouseLeft;
                     },
                     c.RGFW_keyPressed => {
                         // TODO: deal with unicode
@@ -303,6 +297,175 @@ pub fn Context(comptime T: type) type {
             self.delta_time_us = t - self.last_frame_time_us;
             self.last_frame_time_us = t; 
             return c.RGFW_window_shouldClose(self.window) != 0;
+        }
+
+        pub const MouseKey = enum(u8) {
+            mouse_left = c.RGFW_mouseLeft,
+            mouse_right = c.RGFW_mouseRight,
+            mouse_middle = c.RGFW_mouseMiddle,
+        };
+
+        // TODO: snakecase?
+        pub const Key = enum(u8) {
+            keyNULL = c.RGFW_keyNULL,
+            escape = c.RGFW_escape,
+            backtick = c.RGFW_backtick,
+            @"0" = c.RGFW_0,
+            @"1" = c.RGFW_1,
+            @"2" = c.RGFW_2,
+            @"3" = c.RGFW_3,
+            @"4" = c.RGFW_4,
+            @"5" = c.RGFW_5,
+            @"6" = c.RGFW_6,
+            @"7" = c.RGFW_7,
+            @"8" = c.RGFW_8,
+            @"9" = c.RGFW_9,
+            minus = c.RGFW_minus,
+            equals = c.RGFW_equals,
+            backSpace = c.RGFW_backSpace,
+            tab = c.RGFW_tab,
+            space = c.RGFW_space,
+            a = c.RGFW_a,
+            b = c.RGFW_b,
+            c = c.RGFW_c,
+            d = c.RGFW_d,
+            e = c.RGFW_e,
+            f = c.RGFW_f,
+            g = c.RGFW_g,
+            h = c.RGFW_h,
+            i = c.RGFW_i,
+            j = c.RGFW_j,
+            k = c.RGFW_k,
+            l = c.RGFW_l,
+            m = c.RGFW_m,
+            n = c.RGFW_n,
+            o = c.RGFW_o,
+            p = c.RGFW_p,
+            q = c.RGFW_q,
+            r = c.RGFW_r,
+            s = c.RGFW_s,
+            t = c.RGFW_t,
+            u = c.RGFW_u,
+            v = c.RGFW_v,
+            w = c.RGFW_w,
+            x = c.RGFW_x,
+            y = c.RGFW_y,
+            z = c.RGFW_z,
+            period = c.RGFW_period,
+            comma = c.RGFW_comma,
+            slash = c.RGFW_slash,
+            bracket = c.RGFW_bracket,
+            closeBracket = c.RGFW_closeBracket,
+            semicolon = c.RGFW_semicolon,
+            apostrophe = c.RGFW_apostrophe,
+            backSlash = c.RGFW_backSlash,
+            @"return" = c.RGFW_return,
+            delete = c.RGFW_delete,
+            F1 = c.RGFW_F1,
+            F2 = c.RGFW_F2,
+            F3 = c.RGFW_F3,
+            F4 = c.RGFW_F4,
+            F5 = c.RGFW_F5,
+            F6 = c.RGFW_F6,
+            F7 = c.RGFW_F7,
+            F8 = c.RGFW_F8,
+            F9 = c.RGFW_F9,
+            F10 = c.RGFW_F10,
+            F11 = c.RGFW_F11,
+            F12 = c.RGFW_F12,
+            F13 = c.RGFW_F13,
+            F14 = c.RGFW_F14,
+            F15 = c.RGFW_F15,
+            F16 = c.RGFW_F16,
+            F17 = c.RGFW_F17,
+            F18 = c.RGFW_F18,
+            F19 = c.RGFW_F19,
+            F20 = c.RGFW_F20,
+            F21 = c.RGFW_F21,
+            F22 = c.RGFW_F22,
+            F23 = c.RGFW_F23,
+            F24 = c.RGFW_F24,
+            F25 = c.RGFW_F25,
+            capsLock = c.RGFW_capsLock,
+            shiftL = c.RGFW_shiftL,
+            controlL = c.RGFW_controlL,
+            altL = c.RGFW_altL,
+            superL = c.RGFW_superL,
+            shiftR = c.RGFW_shiftR,
+            controlR = c.RGFW_controlR,
+            altR = c.RGFW_altR,
+            superR = c.RGFW_superR,
+            up = c.RGFW_up,
+            down = c.RGFW_down,
+            left = c.RGFW_left,
+            right = c.RGFW_right,
+            insert = c.RGFW_insert,
+            menu = c.RGFW_menu,
+            end = c.RGFW_end,
+            home = c.RGFW_home,
+            pageUp = c.RGFW_pageUp,
+            pageDown = c.RGFW_pageDown,
+            numLock = c.RGFW_numLock,
+            kpSlash = c.RGFW_kpSlash,
+            kpMultiply = c.RGFW_kpMultiply,
+            kpPlus = c.RGFW_kpPlus,
+            kpMinus = c.RGFW_kpMinus,
+            kpEqual = c.RGFW_kpEqual,
+            kp1 = c.RGFW_kp1,
+            kp2 = c.RGFW_kp2,
+            kp3 = c.RGFW_kp3,
+            kp4 = c.RGFW_kp4,
+            kp5 = c.RGFW_kp5,
+            kp6 = c.RGFW_kp6,
+            kp7 = c.RGFW_kp7,
+            kp8 = c.RGFW_kp8,
+            kp9 = c.RGFW_kp9,
+            kp0 = c.RGFW_kp0,
+            kpPeriod = c.RGFW_kpPeriod,
+            kpReturn = c.RGFW_kpReturn,
+            scrollLock = c.RGFW_scrollLock,
+            printScreen = c.RGFW_printScreen,
+            pause = c.RGFW_pause,
+            world1 = c.RGFW_world1,
+            world2 = c.RGFW_world2,
+
+            pub const enter = c.RGFW_enter;
+        };
+
+        pub fn is_mouse_down(_: Self, key: MouseKey) bool {
+            return c.RGFW_isMouseDown(@intFromEnum(key)) == 1;
+        }
+
+        pub fn is_mouse_pressed(_: Self, key: MouseKey) bool {
+            return c.RGFW_isMousePressed(@intFromEnum(key)) == 1;
+        }
+
+        pub fn is_mouse_released(_: Self, key: MouseKey) bool {
+            return c.RGFW_isMouseReleased(@intFromEnum(key)) == 1;
+        }
+
+        pub fn is_key_down(_: Self, key: Key) bool {
+            return c.RGFW_isKeyDown(@intFromEnum(key)) == 1;
+        }
+
+        pub fn is_key_pressed(_: Self, key: Key) bool {
+            return c.RGFW_isKeyPressed(@intFromEnum(key)) == 1;
+        }
+
+        pub fn is_key_released(_: Self, key: Key) bool {
+            return c.RGFW_isKeyReleased(@intFromEnum(key)) == 1;
+        }
+
+        pub const MouseIcon = enum(u8) {
+            mouse_normal= c.RGFW_mouseNormal,
+            mouse_arrow = c.RGFW_mouseArrow,
+            mouse_ibeam = c.RGFW_mouseIbeam,
+            mouse_middle = c.RGFW_mouseCrosshair,
+            mouse_pointing_hand = c.RGFW_mousePointingHand,
+        };
+
+        pub fn set_mouse_standard(self: Self, icon: MouseIcon) void {
+            _ = c.RGFW_window_setMouseStandard(self.window, @intFromEnum(icon));
         }
 
         pub fn close_window(self: Self) void {
