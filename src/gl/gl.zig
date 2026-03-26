@@ -58,11 +58,29 @@ pub const RGBA = packed struct(u32) {
         };
     }
 
+    pub fn from_vec4(v4: Vec4) RGBA {
+        return .{
+            .r = @intFromFloat(v4[0] * 255.0),
+            .g = @intFromFloat(v4[1] * 255.0),
+            .b = @intFromFloat(v4[2] * 255.0),
+            .a = @intFromFloat(v4[3] * 255.0),
+        };
+    }
+
     pub fn from_u32(u: u32) RGBA {
         if (comptime @import("builtin").cpu.arch.endian() == .little)
             return @bitCast(@byteSwap(u))
         else
             return @bitCast(u);
+    }
+
+    pub fn gamma(rgba: RGBA, exp: f32) RGBA {
+        var v4 = rgba.to_vec4();
+        for (&v4) |*i| {
+            i.* = std.math.pow(f32, i.*, exp);
+        }
+
+        return .from_vec4(v4);
     }
 };
 
@@ -138,7 +156,6 @@ pub fn Context(comptime T: type) type {
         vierwport_size: u32,
         aspect_ratio: f32, // width / height
         pixel_scale: f32, // how big is a pixel in gl coordinate
-                          //
         
         mouse_pos_screen: Vec2i,
         mouse_pos_gl: Vec2,
@@ -147,6 +164,7 @@ pub fn Context(comptime T: type) type {
         mouse_scroll: Vec2,
 
         input_chars: std.ArrayList(u8),
+        backspace: u32,
 
         is_paste: bool,
 
@@ -168,6 +186,7 @@ pub fn Context(comptime T: type) type {
             c.RGFW_window_setUserPtr(self.window, self);
             _ = c.RGFW_setWindowRefreshCallback(on_refresh);
             _ = c.RGFW_setWindowResizedCallback(on_resize);
+            
 
             if (g.gladLoadGL(c.RGFW_getProcAddress_OpenGL) == 0) {
                 log("ERROR: failed to load GLAD", .{});
@@ -248,11 +267,11 @@ pub fn Context(comptime T: type) type {
 
             self.a = gpa;
             self.input_chars = .empty;
+            self.backspace = 0;
             self.is_paste = false;
 
             self.last_frame_time_us = std.time.microTimestamp();
             self.delta_time_us = 0;
-
         }
 
         // reset per-frame state and handle events
@@ -261,6 +280,7 @@ pub fn Context(comptime T: type) type {
             self.mouse_delta = .{ 0, 0 };
 
             self.input_chars.clearRetainingCapacity();
+            self.backspace = 0;
             self.is_paste = false;
 
             var event: c.RGFW_event = undefined;
@@ -277,6 +297,7 @@ pub fn Context(comptime T: type) type {
                     c.RGFW_keyPressed => {
                         // TODO: deal with unicode
                         const ch = event.key.sym;
+                        if (ch == @intFromEnum(Key.backSpace)) self.backspace += 1;
                         // if (ch == c.RGFW_backSpace and self.input_chars.items.len > 0) self.input_chars.shrinkRetainingCapacity(self.input_chars.items.len-1)
                         // std.log.debug("key: value: 0x{s} sym: 0x{s}, mod: 0x{s}",
                         //     .{ std.fmt.hex(event.key.value), std.fmt.hex(event.key.sym), std.fmt.hex(event.key.mod) });
@@ -296,6 +317,7 @@ pub fn Context(comptime T: type) type {
             const t = std.time.microTimestamp();
             self.delta_time_us = t - self.last_frame_time_us;
             self.last_frame_time_us = t; 
+            // log("backspace: {}", .{self.backspace});
             return c.RGFW_window_shouldClose(self.window) != 0;
         }
 
