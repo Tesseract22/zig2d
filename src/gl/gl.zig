@@ -163,16 +163,13 @@ pub fn Context(comptime T: type) type {
 
         mouse_scroll: Vec2,
 
-        input_chars: std.ArrayList(u8),
+        input_chars: std.ArrayList(u21),
         backspace: u32,
 
         is_paste: bool,
 
         last_frame_time_us: i64,
         delta_time_us: i64,
-
-
-                          
        
         const Self = @This();
         pub fn init(self: *Self, user_data: *T, render_fn: *const fn (ctx: *Self) void,
@@ -297,15 +294,10 @@ pub fn Context(comptime T: type) type {
                     c.RGFW_keyPressed => {
                         // TODO: deal with unicode
                         const ch = event.key.sym;
-                        if (ch == @intFromEnum(Key.backSpace)) self.backspace += 1;
-                        // if (ch == c.RGFW_backSpace and self.input_chars.items.len > 0) self.input_chars.shrinkRetainingCapacity(self.input_chars.items.len-1)
-                        // std.log.debug("key: value: 0x{s} sym: 0x{s}, mod: 0x{s}",
-                        //     .{ std.fmt.hex(event.key.value), std.fmt.hex(event.key.sym), std.fmt.hex(event.key.mod) });
-                        if (event.key.value == 'v'  and (event.key.mod & c.RGFW_modControl) != 0) self.is_paste = true;
-                        if (ch < code_first_char or ch > code_last_char) continue
-                        else {
-                            self.input_chars.append(self.a, event.key.sym) catch unreachable;
-                        }
+                        if (ch == @intFromEnum(Key.backSpace)) self.backspace += 1
+                        else if (event.key.value == 'v'  and (event.key.mod & c.RGFW_modControl) != 0) self.is_paste = true
+                        else if (ch != 0 and ch != @intFromEnum(Key.escape) and std.ascii.isAscii(ch))
+                            self.input_chars.append(self.a, ch) catch @panic("OOM");
                     },
                     c.RGFW_mouseScroll => {
                         self.mouse_scroll[0] += event.scroll.x;
@@ -313,8 +305,7 @@ pub fn Context(comptime T: type) type {
                     },
                     c.RGFW_compositionCommitted => {
                         const slice = std.mem.sliceTo(event.composition.commited_result, 0);
-                        log("valid: {}", .{ std.unicode.utf8ValidateSlice(slice) });
-                        self.input_chars.appendSlice(self.a, slice) catch unreachable;            
+                        _ = append_utf8_slice(&self.input_chars, self.a, slice) catch @panic("TODO: handle invalid utf8 sequence");
                     },
                     else => {},
                 }
@@ -710,78 +701,94 @@ pub fn Context(comptime T: type) type {
             };
         }
 
-        pub const CodePointVertexIterator = struct {
-            pos: Vec2,
-            local_pos: Vec2,
 
-            scale: f32,
-            max_width: f32,
-            rgba_vec4: Vec4,
+        pub const DummyU21Iterator = struct {
+            slice: []const u21,
+            idx: u32 = 0,
 
-            utf8_it: std.unicode.Utf8Iterator,
-
-            ctx: *Self,
-            fonts: *Font.Dynamic,
-            active_font: Font,
-
-            pub fn next(self: *CodePointVertexIterator) ?[4]BaseVertexData {
-                const scale = self.scale * (display_font_pixels / font_pixels);
-                const pos = self.pos;
-                const max_width = self.max_width;
-                const rgba_vec4 = self.rgba_vec4;
-
-                const code_point = self.utf8_it.nextCodepoint() orelse return null;
-                if (code_point == '\n') @panic("newline not supported");
-                // if (code_point < code_first_char or code_point > code_last_char) {
-                //     var encode_buf: [32]u8 = undefined;
-                //     if (std.unicode.utf8Encode(code_point, &encode_buf)) |len| {
-                //         log("WARNING: unsupported characteer `{any}`", .{ encode_buf[0..len] });
-                //     } else |err| {
-                //         log("WARNING: invalid unicode sequence `0x{s}`: {}", .{ std.fmt.hex(code_point), err });
-                //     }
-                //     continue;
-                // }
-
-                const packed_char, const aligned_quad = self.fonts.get_or_load(self.active_font, code_point, font_pixels);
-
-                // TODO: use width instead of advance to determine linebreak?
-                const advance = packed_char.xadvance * self.ctx.pixel_scale * scale;
-                if (self.local_pos[0] + advance - pos[0] > max_width) {
-                    self.local_pos[0] = pos[0]; 
-                    self.local_pos[1] -= self.ctx.cal_font_h(scale);
-                }
-
-                const w = 
-                    @as(f32, @floatFromInt(packed_char.x1 - packed_char.x0))
-                        * self.ctx.pixel_scale * scale;
-                const h = 
-                    @as(f32, @floatFromInt(packed_char.y1 - packed_char.y0))
-                        * self.ctx.pixel_scale * scale;
-
-                const left = self.local_pos[0] + (packed_char.xoff * self.ctx.pixel_scale * scale);
-                const bot = self.local_pos[1] - 
-                    (packed_char.yoff +
-                     @as(f32, @floatFromInt(packed_char.y1)) -
-                     @as(f32, @floatFromInt(packed_char.y0)))
-                    * self.ctx.pixel_scale * scale;
-
-                const tex_coord = [4]Vec2 {
-                    .{ aligned_quad.s1, aligned_quad.t0 },
-                    .{ aligned_quad.s0, aligned_quad.t0 },
-                    .{ aligned_quad.s0, aligned_quad.t1 },
-                    .{ aligned_quad.s1, aligned_quad.t1 },
-                };
-
-                self.local_pos[0] += advance;
-                return [4]BaseVertexData {
-                    .{ .pos = .{left+w, bot+h, 0}, .rgba = rgba_vec4, .tex = tex_coord[0] },
-                    .{ .pos = .{left,   bot+h, 0}, .rgba = rgba_vec4, .tex = tex_coord[1] },
-                    .{ .pos = .{left,   bot,   0}, .rgba = rgba_vec4, .tex = tex_coord[2] },
-                    .{ .pos = .{left+w, bot,   0}, .rgba = rgba_vec4, .tex = tex_coord[3] },
-                };
-
+            pub fn nextCodepoint(self: *DummyU21Iterator) ?u21 {
+                if (self.idx >= self.slice.len) return null;
+                self.idx += 1;
+                return self.slice[self.idx - 1];
             }
         };
+
+        pub fn CodePointVertexIterator(comptime Utf8Iterator: type) type {
+            return struct {
+                pos: Vec2,
+                local_pos: Vec2,
+
+                scale: f32,
+                max_width: f32,
+                rgba_vec4: Vec4,
+
+                utf8_it: Utf8Iterator,
+
+                ctx: *Self,
+                fonts: *Font.Dynamic,
+                active_font: Font,
+
+                const It = @This();
+
+                pub fn next(self: *It) ?[4]BaseVertexData {
+                    const scale = self.scale * (display_font_pixels / font_pixels);
+                    const pos = self.pos;
+                    const max_width = self.max_width;
+                    const rgba_vec4 = self.rgba_vec4;
+
+                    const code_point = self.utf8_it.nextCodepoint() orelse return null;
+                    if (code_point == '\n') @panic("newline not supported");
+                    // if (code_point < code_first_char or code_point > code_last_char) {
+                    //     var encode_buf: [32]u8 = undefined;
+                    //     if (std.unicode.utf8Encode(code_point, &encode_buf)) |len| {
+                    //         log("WARNING: unsupported characteer `{any}`", .{ encode_buf[0..len] });
+                    //     } else |err| {
+                    //         log("WARNING: invalid unicode sequence `0x{s}`: {}", .{ std.fmt.hex(code_point), err });
+                    //     }
+                    //     continue;
+                    // }
+
+                    const packed_char, const aligned_quad = self.fonts.get_or_load(self.active_font, code_point, font_pixels);
+
+                    // TODO: use width instead of advance to determine linebreak?
+                    const advance = packed_char.xadvance * self.ctx.pixel_scale * scale;
+                    if (self.local_pos[0] + advance - pos[0] > max_width) {
+                        self.local_pos[0] = pos[0]; 
+                        self.local_pos[1] -= self.ctx.cal_font_h(scale);
+                    }
+
+                    const w = 
+                        @as(f32, @floatFromInt(packed_char.x1 - packed_char.x0))
+                        * self.ctx.pixel_scale * scale;
+                    const h = 
+                        @as(f32, @floatFromInt(packed_char.y1 - packed_char.y0))
+                        * self.ctx.pixel_scale * scale;
+
+                    const left = self.local_pos[0] + (packed_char.xoff * self.ctx.pixel_scale * scale);
+                    const bot = self.local_pos[1] - 
+                        (packed_char.yoff +
+                         @as(f32, @floatFromInt(packed_char.y1)) -
+                         @as(f32, @floatFromInt(packed_char.y0)))
+                        * self.ctx.pixel_scale * scale;
+
+                    const tex_coord = [4]Vec2 {
+                        .{ aligned_quad.s1, aligned_quad.t0 },
+                        .{ aligned_quad.s0, aligned_quad.t0 },
+                        .{ aligned_quad.s0, aligned_quad.t1 },
+                        .{ aligned_quad.s1, aligned_quad.t1 },
+                    };
+
+                    self.local_pos[0] += advance;
+                    return [4]BaseVertexData {
+                        .{ .pos = .{left+w, bot+h, 0}, .rgba = rgba_vec4, .tex = tex_coord[0] },
+                        .{ .pos = .{left,   bot+h, 0}, .rgba = rgba_vec4, .tex = tex_coord[1] },
+                        .{ .pos = .{left,   bot,   0}, .rgba = rgba_vec4, .tex = tex_coord[2] },
+                        .{ .pos = .{left+w, bot,   0}, .rgba = rgba_vec4, .tex = tex_coord[3] },
+                    };
+
+                }
+            };
+        }
 
         pub fn set_active_font(self: *Self, font: Font) void {
             self.active_font = font;
@@ -789,18 +796,35 @@ pub fn Context(comptime T: type) type {
 
         pub fn make_code_point_vertex_data(
             self: *Self, pos: Vec2, scale: f32,
-            text: []const u8, max_width: f32, rgba: RGBA) CodePointVertexIterator {
+            text: []const u8, max_width: f32, rgba: RGBA) CodePointVertexIterator(std.unicode.Utf8Iterator) {
 
             const view = std.unicode.Utf8View.init(text) catch @panic("invalid utf8 string");
             const utf8_it = view.iterator();
 
-            return CodePointVertexIterator {
+            return .{
                 .pos = pos,
                 .local_pos = pos,
                 .scale = scale,
                 .max_width = max_width,
                 .rgba_vec4 = rgba.to_vec4(),
                 .utf8_it = utf8_it,
+                .ctx = self,
+                .fonts =  &self.fonts,
+                .active_font = self.active_font,
+            };
+        }
+
+        pub fn make_code_point_vertex_data_from_codepoints(
+            self: *Self, pos: Vec2, scale: f32,
+            codepoints: []const u21, max_width: f32, rgba: RGBA) CodePointVertexIterator(DummyU21Iterator) {
+
+            return .{
+                .pos = pos,
+                .local_pos = pos,
+                .scale = scale,
+                .max_width = max_width,
+                .rgba_vec4 = rgba.to_vec4(),
+                .utf8_it = .{ .slice = codepoints },
                 .ctx = self,
                 .fonts =  &self.fonts,
                 .active_font = self.active_font,
@@ -823,13 +847,23 @@ pub fn Context(comptime T: type) type {
         }
 
         // TODO: handle newline and invalid unicode
-        pub fn text_width(self: *Self, scale: f32, text: []const u8) f32 {
+        pub fn text_width_ascii(self: *Self, scale: f32, text: []const u8) f32 {
             const view = std.unicode.Utf8View.init(text) catch @panic("invalid utf8 string");
             var utf8_it = view.iterator();
     
             var w: f32 = 0;
-            while (utf8_it.nextCodepoint()) |code_point| {
-                const packed_char, _ = self.fonts.get_or_load(self.active_font, code_point, font_pixels);
+            while (utf8_it.nextCodepoint()) |codepoint| {
+                const packed_char, _ = self.fonts.get_or_load(self.active_font, codepoint, font_pixels);
+                const advance = packed_char.xadvance * self.pixel_scale * scale * (display_font_pixels / font_pixels);
+                w += advance;
+            }
+            return w;
+        }
+
+        pub fn text_width_codepoints(self: *Self, scale: f32, codepoints: []const u21) f32 {
+            var w: f32 = 0;
+            for (codepoints) |codepoint| {
+                const packed_char, _ = self.fonts.get_or_load(self.active_font, codepoint, font_pixels);
                 const advance = packed_char.xadvance * self.pixel_scale * scale * (display_font_pixels / font_pixels);
                 w += advance;
             }
@@ -839,6 +873,10 @@ pub fn Context(comptime T: type) type {
         pub fn ime_set_composition_windows(self: *Self, x: f32, y: f32) void {
             const sc_x, const sc_y = self.gl_coord_to_screen(.{ x, y });
             return c.RGFW_setCompositionWindows(self.window, sc_x, sc_y);
+        }
+
+        pub fn ime_disable_composition(self: *Self) void {
+            c.RGFW_disableCompositionWindows(self.window);
         }
 
         // 
@@ -1036,5 +1074,22 @@ pub fn bind_vertex_attr(comptime T: type) !void {
             @sizeOf(T),
             @ptrFromInt(@offsetOf(T, f.name)));
         g.glEnableVertexAttribArray(i);
+    }
+}
+
+pub fn append_utf8_slice(array: *std.ArrayList(u21), a: Allocator, buf: []const u8) !u32 {
+    var ct: u32 = 0;
+    const utf8_view = try std.unicode.Utf8View.init(buf);
+    var it = utf8_view.iterator();
+    while (it.nextCodepoint()) |codepoint|: (ct += 1) {
+        array.append(a, codepoint) catch @panic("OOM");
+    }
+    return ct;
+}
+
+pub fn utf8_to_ascii(codepoints: []const u21, out: []u8) void {
+    for (codepoints, out) |codepoint, *ch| {
+        ch.* = @intCast(codepoint);
+        assert(std.ascii.isAscii(ch.*));
     }
 }
