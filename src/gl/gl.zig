@@ -311,6 +311,11 @@ pub fn Context(comptime T: type) type {
                         self.mouse_scroll[0] += event.scroll.x;
                         self.mouse_scroll[1] += event.scroll.y;
                     },
+                    c.RGFW_compositionCommitted => {
+                        const slice = std.mem.sliceTo(event.composition.commited_result, 0);
+                        log("valid: {}", .{ std.unicode.utf8ValidateSlice(slice) });
+                        self.input_chars.appendSlice(self.a, slice) catch unreachable;            
+                    },
                     else => {},
                 }
             }
@@ -829,6 +834,11 @@ pub fn Context(comptime T: type) type {
                 w += advance;
             }
             return w;
+        }
+
+        pub fn ime_set_composition_windows(self: *Self, x: f32, y: f32) void {
+            const sc_x, const sc_y = self.gl_coord_to_screen(.{ x, y });
+            return c.RGFW_setCompositionWindows(self.window, sc_x, sc_y);
         }
 
         // 
