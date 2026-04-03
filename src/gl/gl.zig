@@ -46,6 +46,7 @@ pub const RGBA = packed struct(u32) {
 
     pub const white = RGBA { .r = 255, .g = 255, .b = 255, .a = 255 };
     pub const black = RGBA { .r = 0, .g = 0, .b = 0, .a = 0xff };
+    pub const red = RGBA { .r = 0xff, .g = 0x00, .b = 0, .a = 0xff };
     pub const yellow = RGBA { .r = 0xff, .g = 0xff, .b = 0, .a = 0xff };
     pub const transparent = RGBA { .r = 0, .b = 0, .g = 0, .a = 0};
 
@@ -639,6 +640,108 @@ pub const Context = struct {
         g.glLineWidth(1.0);
     }
 
+    pub fn draw_circle_sector(self: *Self, center: Vec2, radius: f32, sector: u32, start: f32, end: f32, rgba: RGBA) void {
+        assert(sector != 0);
+        assert(end >= start);
+        const sector_f: f32 = @floatFromInt(sector);
+        const range = end - start;
+        const segment = range/sector_f;
+        const num_segment_to_fill_360 = 2*std.math.pi/segment;
+        for (0..sector) |n| {
+            const nf: f32= @floatFromInt(n);
+            const a1 = nf * segment + start; // angle 1
+            const a2 = @mod(nf+1, num_segment_to_fill_360) * segment + start; // angle 2
+            const p1 = Vec2 {
+                @cos(a1) * radius + center[0],
+                @sin(a1) * radius + center[1],
+            };
+            const p2 = Vec2 {
+                @cos(a2) * radius + center[0],
+                @sin(a2) * radius + center[1],
+            };
+            self.draw_triangle(center, p1, p2, rgba);
+        }
+    }
+
+    pub fn draw_circle(self: *Self, center: Vec2, radius: f32, rgba: RGBA) void {
+        self.draw_circle_sector(center, radius, 50, 0, std.math.pi*2, rgba);
+    }
+
+    pub fn push_circle_sector_lines_vertexes(self: *Self, vertexes: *std.ArrayList(BaseVertexData), center: Vec2, radius: f32, sector: u32, start: f32, end: f32, rgba: RGBA) void {
+        const sector_f: f32 = @floatFromInt(sector);
+        const range = end - start;
+        const segment = range/sector_f;
+        // const num_segment_to_fill_360 = 2*std.math.pi/segment;
+        for (0..sector+1) |n| {
+            const nf: f32= @floatFromInt(n);
+            const a1 = nf * segment + start; // angle 1
+                                             // const a2 = @mod(nf+1, num_segment_to_fill_360) * segment + start; // angle 2
+            const p1 = Vec2 {
+                @cos(a1) * radius + center[0],
+                @sin(a1) * radius + center[1],
+            };
+            // const p2 = Vec2 {
+            //     @cos(a2) * radius + center[0],
+            //     @sin(a2) * radius + center[1],
+            // };
+            vertexes.append(self.a, .{ .pos = vec2_to_vec3(p1), .rgba = rgba.to_vec4(), .tex = .{ 0, 0 } }) catch @panic("OOM");
+        }
+    }
+
+    pub fn draw_circle_sector_lines(self: *Self, center: Vec2, radius: f32, sector: u32, start: f32, end: f32, thickness: f32, rgba: RGBA) void {
+        const State = struct {
+            var vertexes = std.ArrayList(BaseVertexData).empty;
+        };
+        State.vertexes.clearRetainingCapacity();
+        self.push_circle_sector_lines_vertexes(&State.vertexes, center, radius, sector, start, end, rgba);
+        self.draw_lines(State.vertexes.items, thickness);
+    }
+
+
+    pub fn draw_circle_lines(self: *Self, center: Vec2, radius: f32, thickness: f32, rgba: RGBA) void {
+        self.draw_circle_sector_lines(center, radius, 50, 0, std.math.pi*2, thickness, rgba);
+    }
+
+    pub fn draw_rect_rounded(self: *Self, botleft: Vec2, size: Vec2, radius_: f32, rgba: RGBA) void {
+        var radius = radius_;
+        radius = @min(radius, size[0]/2);
+        radius = @min(radius, size[1]/2);
+        const inner_botleft = v2add(botleft, v2splat(radius));
+        const inner_size = v2sub(size, v2splat(2*radius));
+        self.draw_rect(inner_botleft, inner_size, rgba); // inner rect 
+        self.draw_rect(v2add(botleft, .{ 0, radius }), .{ radius, inner_size[1] }, rgba); // left rect 
+        self.draw_rect(v2add(botleft, .{ inner_size[0]+radius, radius }), .{ radius, inner_size[1] }, rgba); // right rect 
+        self.draw_rect(v2add(botleft, .{ radius, 0 }), .{ inner_size[0], radius }, rgba); // bot rect 
+        self.draw_rect(v2add(botleft, .{ radius, inner_size[1]+radius}), .{ inner_size[0], radius }, rgba); // top rect 
+           
+        const sector = 25;
+        // const sector_f: f32 = @floatFromInt(sector);
+        const quater = std.math.pi/2.0;
+        self.draw_circle_sector(inner_botleft, radius, sector, 2*quater, 3*quater, rgba); // botleft
+        self.draw_circle_sector(v2add(botleft, .{ radius, inner_size[1]+radius}), radius, sector, 1*quater, 2*quater, rgba); // topleft
+        self.draw_circle_sector(v2add(inner_botleft, .{ inner_size[0], 0}), radius, sector, 3*quater, 4*quater, rgba); // botright
+        self.draw_circle_sector(v2add(inner_botleft, inner_size), radius, sector, 0*quater, 1*quater, rgba); // topright
+    }
+
+    pub fn draw_rect_rounded_lines(self: *Self, botleft: Vec2, size: Vec2, radius: f32, thickness: f32, rgba: RGBA) void {
+        const State = struct {
+            var vertexes = std.ArrayList(BaseVertexData).empty;
+        };
+        State.vertexes.clearRetainingCapacity();
+        const inner_botleft = v2add(botleft, v2splat(radius));
+        const inner_size = v2sub(size, v2splat(2*radius));
+
+        const sector = 25;
+        const quater = std.math.pi/2.0;
+        self.push_circle_sector_lines_vertexes(&State.vertexes, inner_botleft, radius, sector, 2*quater, 3*quater, rgba); // botlet
+        self.push_circle_sector_lines_vertexes(&State.vertexes, v2add(inner_botleft, .{ inner_size[0], 0}), radius, sector, 3*quater, 4*quater, rgba); // botright
+        self.push_circle_sector_lines_vertexes(&State.vertexes, v2add(inner_botleft, inner_size), radius, sector, 0*quater, 1*quater, rgba); // topright
+        self.push_circle_sector_lines_vertexes(&State.vertexes, v2add(botleft, .{ radius, inner_size[1]+radius}), radius, sector, 1*quater, 2*quater, rgba); // topleft
+                                                                                                                                                State.vertexes.append(self.a, .{ .pos = .{ botleft[0], inner_botleft[1], 0}, .rgba = rgba.to_vec4(), .tex = .{0,0} }) catch @panic("OOM");
+
+        self.draw_lines(State.vertexes.items, thickness);
+    }
+
     pub fn draw_triangle(self: *Self, i: Vec2, j: Vec2, k: Vec2, rgba: RGBA) void {
         const rgba_vec4 = rgba.to_vec4();
         const vertexes = [_]BaseVertexData {
@@ -722,11 +825,9 @@ pub const Context = struct {
         g.glBindBuffer(g.GL_ARRAY_BUFFER, self.batch_VBO);
         g.glBufferData(g.GL_ARRAY_BUFFER, @intCast(@sizeOf([4]BaseVertexData) * vertexes.len), vertexes.ptr, g.GL_STATIC_DRAW);
 
-        // g.glBufferData(g.GL_ARRAY_BUFFER, @sizeOf(@TypeOf(mock_vertexes)), &mock_vertexes, g.GL_STATIC_DRAW);
-
         g.glBindVertexArray(self.batch_VAO);
 
-        g.glBindTexture(g.GL_TEXTURE_2D, tex.id);   
+        g.glBindTexture(g.GL_TEXTURE_2D, tex.id);
 
         if (line_thickness) |thickness| {
             g.glLineWidth(thickness);
@@ -750,6 +851,21 @@ pub const Context = struct {
         g.glBindVertexArray(0);
         g.glBindTexture(g.GL_TEXTURE_2D, 0);   
         g.glBindBuffer(g.GL_ELEMENT_ARRAY_BUFFER, 0);
+    }
+
+    pub fn draw_lines(self: *Self,
+        vertexes: []BaseVertexData,
+        thickness: f32) void {
+        g.glUseProgram(self.base_shader_pgm);
+
+        g.glBindBuffer(g.GL_ARRAY_BUFFER, self.batch_VBO);
+        g.glBufferData(g.GL_ARRAY_BUFFER, @intCast(@sizeOf([4]BaseVertexData) * vertexes.len), vertexes.ptr, g.GL_STATIC_DRAW);
+
+        g.glBindVertexArray(self.batch_VAO);
+
+        g.glLineWidth(thickness);
+
+        g.glDrawArrays(g.GL_LINE_STRIP, 0, @intCast(vertexes.len));
     }
 
     pub fn make_rect_vertex_data(_: *Self, botleft: Vec2, size: Vec2, rgba: RGBA) [4]BaseVertexData {
@@ -1157,4 +1273,33 @@ pub fn utf8_to_ascii(codepoints: []const u21, out: []u8) void {
         ch.* = @intCast(codepoint);
         assert(std.ascii.isAscii(ch.*));
     }
+}
+
+pub fn v2add(a: Vec2, b: Vec2) Vec2 {
+    return .{ a[0] + b[0], a[1] + b[1] };
+}
+
+pub fn v2sub(a: Vec2, b: Vec2) Vec2 {
+    return .{ a[0] - b[0], a[1] - b[1] };
+}
+
+pub fn v2scal(a: Vec2, b: f32) Vec2 {
+    return .{ a[0] * b , a[1] * b };
+}
+
+// pub fn v2pixels(a: Vec2) Vec2 {
+//     return .{ ctx.pixels(a[0]), ctx.pixels(a[1]) };
+// }
+
+pub fn v2eq(a: Vec2, b: Vec2) bool {
+    return a[0] == b[0] and a[1] == b[1];
+}
+
+pub fn v2eq_approx(a: Vec2, b: Vec2) bool {
+    return std.math.approxEqAbs(f32, a[0], b[0], 0.0001) and 
+    std.math.approxEqAbs(f32, a[1], b[1], 0.0001);
+}
+
+pub fn v2splat(f: f32) Vec2 {
+    return .{ f, f };
 }
