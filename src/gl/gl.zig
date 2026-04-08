@@ -181,6 +181,7 @@ pub const Context = struct {
         c.RGFW_window_setUserPtr(self.window, self);
         _ = c.RGFW_setEventCallback(c.RGFW_windowRefresh, on_refresh);
         _ = c.RGFW_setEventCallback(c.RGFW_windowResized, on_resize);
+        // c.RGFW_window_captureRawMouse(self.window, c.RGFW_TRUE);
 
 
         if (g.gladLoadGL(c.RGFW_getProcAddress_OpenGL) == 0) {
@@ -737,7 +738,7 @@ pub const Context = struct {
         self.push_circle_sector_lines_vertexes(&State.vertexes, v2add(inner_botleft, .{ inner_size[0], 0}), radius, sector, 3*quater, 4*quater, rgba); // botright
         self.push_circle_sector_lines_vertexes(&State.vertexes, v2add(inner_botleft, inner_size), radius, sector, 0*quater, 1*quater, rgba); // topright
         self.push_circle_sector_lines_vertexes(&State.vertexes, v2add(botleft, .{ radius, inner_size[1]+radius}), radius, sector, 1*quater, 2*quater, rgba); // topleft
-                                                                                                                                                State.vertexes.append(self.a, .{ .pos = .{ botleft[0], inner_botleft[1], 0}, .rgba = rgba.to_vec4(), .tex = .{0,0} }) catch @panic("OOM");
+        State.vertexes.append(self.a, .{ .pos = .{ botleft[0], inner_botleft[1], 0}, .rgba = rgba.to_vec4(), .tex = .{0,0} }) catch @panic("OOM");
 
         self.draw_lines(State.vertexes.items, thickness);
     }
@@ -862,6 +863,8 @@ pub const Context = struct {
         g.glBufferData(g.GL_ARRAY_BUFFER, @intCast(@sizeOf([4]BaseVertexData) * vertexes.len), vertexes.ptr, g.GL_STATIC_DRAW);
 
         g.glBindVertexArray(self.batch_VAO);
+        
+        g.glBindTexture(g.GL_TEXTURE_2D, self.white_tex.id);
 
         g.glLineWidth(thickness);
 
