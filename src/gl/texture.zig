@@ -40,7 +40,7 @@ pub fn from_png_memory(data: []const u8) Texture {
             .{ err, c.lodepng_error_text(err) }); 
         @panic("FATAL");
     }
-    tex.id = from_u32rgba_memory(tex.w, tex.h, out_ptr);
+    tex.id = from_u32rgba_memory(tex.w, tex.h, @ptrCast(@alignCast(out_ptr)));
    
     return tex;
 }
